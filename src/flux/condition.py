@@ -118,7 +118,6 @@ class Condition(object):
                 tokens, ids = encode_images(pipe, e_condition)
             else:
                 tokens, ids = encode_images(pipe, self.condition)
-            tokens, ids = encode_images(pipe, self.condition)
         else:
             raise NotImplementedError(
                 f"Condition type {self.condition_type} not implemented"
