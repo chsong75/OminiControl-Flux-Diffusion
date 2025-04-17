@@ -1,6 +1,6 @@
 import torch
 from diffusers.pipelines import FluxPipeline
-from typing import List, Union, Optional, Dict, Any, Callable
+from typing import List, Union, Optional, Dict, Any, Callable, Type
 
 from diffusers.pipelines.flux.pipeline_flux import (
     FluxPipelineOutput,
@@ -12,18 +12,67 @@ from diffusers.pipelines.flux.pipeline_flux import (
 from diffusers.models.attention_processor import Attention, F
 from diffusers.models.embeddings import apply_rotary_emb
 
+from peft.tuners.tuners_utils import BaseTunerLayer
+
 from accelerate.utils import is_torch_version
 
 from .tools import clip_hidden_states
+
+from .condition import Condition
+
+
+class specify_lora:
+    def __init__(self, lora_modules: List[BaseTunerLayer], specified_lora) -> None:
+        self.specified_lora = specified_lora
+        self.lora_modules: List[BaseTunerLayer] = [
+            each for each in lora_modules if isinstance(each, BaseTunerLayer)
+        ]
+        # To save the original scaling values
+        self.scales = [
+            {
+                active_adapter: lora_module.scaling[active_adapter]
+                for active_adapter in lora_module.active_adapters
+                if active_adapter in lora_module.scaling
+            }
+            for lora_module in self.lora_modules
+        ]
+
+    def __enter__(self) -> None:
+        for lora_module in self.lora_modules:
+            if not isinstance(lora_module, BaseTunerLayer):
+                continue
+            for active_adapter in lora_module.active_adapters:
+                if active_adapter not in lora_module.scaling:
+                    continue
+                lora_module.scaling[active_adapter] = (
+                    1 if active_adapter == self.specified_lora else 0
+                )
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[Any],
+    ) -> None:
+        # Restore the original scaling values
+        for i, lora_module in enumerate(self.lora_modules):
+            if not isinstance(lora_module, BaseTunerLayer):
+                continue
+            for active_adapter in lora_module.active_adapters:
+                if active_adapter not in lora_module.scaling:
+                    continue
+                lora_module.scaling[active_adapter] = self.scales[i][active_adapter]
 
 
 def attn_forward(
     attn: Attention,
     hidden_states: List[torch.FloatTensor],
+    adapters: List[str],
     hidden_states2: Optional[List[torch.FloatTensor]] = [],
     position_embs: Optional[List[torch.Tensor]] = None,
 ) -> torch.FloatTensor:
     bs, _, _ = hidden_states[0].shape
+    h2_n = len(hidden_states2)
 
     queries, keys, values = [], [], []
 
@@ -44,10 +93,11 @@ def attn_forward(
         values.append(value)
 
     # Prepare query, key, value for each hidden state (image branch)
-    for hidden_state in hidden_states:
-        query = attn.to_q(hidden_state)
-        key = attn.to_k(hidden_state)
-        value = attn.to_v(hidden_state)
+    for i, hidden_state in enumerate(hidden_states):
+        with specify_lora((attn.to_q, attn.to_k, attn.to_v), adapters[i + h2_n]):
+            query = attn.to_q(hidden_state)
+            key = attn.to_k(hidden_state)
+            value = attn.to_v(hidden_state)
 
         head_dim = key.shape[-1] // attn.heads
         reshape_fn = lambda x: x.view(bs, -1, attn.heads, head_dim).transpose(1, 2)
@@ -81,8 +131,9 @@ def attn_forward(
     for i, hidden_state in enumerate(hidden_states):
         hidden_states[i] = attn_output[:, offset : offset + hidden_state.shape[1]]
         if hasattr(attn, "to_out"):
-            hidden_states[i] = attn.to_out[0](hidden_states[i])
-            hidden_states[i] = attn.to_out[1](hidden_states[i])
+            with specify_lora((attn.to_out[0],), adapters[i + h2_n]):
+                hidden_states[i] = attn.to_out[0](hidden_states[i])
+                hidden_states[i] = attn.to_out[1](hidden_states[i])
         offset += hidden_state.shape[1]
 
     return (hidden_states, hidden_states2) if hidden_states2 else hidden_states
@@ -93,6 +144,7 @@ def block_forward(
     image_hidden_states: List[torch.FloatTensor],
     text_hidden_states: List[torch.FloatTensor],
     tembs: List[torch.FloatTensor],
+    adapters: List[str],
     position_embs=None,
 ):
     txt_n = len(text_hidden_states)
@@ -104,7 +156,8 @@ def block_forward(
         txt_variables[i] = self.norm1_context(text_h, emb=tembs[i])
 
     for i, image_h in enumerate(image_hidden_states):
-        img_variables[i] = self.norm1(image_h, emb=tembs[i + txt_n])
+        with specify_lora((self.norm1.linear,), adapters[i + txt_n]):
+            img_variables[i] = self.norm1(image_h, emb=tembs[i + txt_n])
 
     # Attention.
     img_attn_output, txt_attn_output = attn_forward(
@@ -112,6 +165,7 @@ def block_forward(
         hidden_states=[each[0] for each in img_variables],
         hidden_states2=[each[0] for each in txt_variables],
         position_embs=position_embs,
+        adapters=adapters,
     )
 
     for i in range(len(text_hidden_states)):
@@ -131,7 +185,8 @@ def block_forward(
             self.norm2(image_hidden_states[i]) * (1 + scale_mlp[:, None])
             + shift_mlp[:, None]
         )
-        image_hidden_states[i] += self.ff(norm_h) * gate_mlp.unsqueeze(1)
+        with specify_lora((self.ff.net[2],), adapters[i + txt_n]):
+            image_hidden_states[i] += self.ff(norm_h) * gate_mlp.unsqueeze(1)
         image_hidden_states[i] = clip_hidden_states(image_hidden_states[i])
 
     return image_hidden_states, text_hidden_states
@@ -141,6 +196,7 @@ def single_block_forward(
     self,
     hidden_states: List[torch.FloatTensor],
     tembs: List[torch.FloatTensor],
+    adapters: List[str],
     position_embs=None,
 ):
     residual = [h for h in hidden_states]
@@ -151,15 +207,19 @@ def single_block_forward(
         # FLUX version. In the original implementation, the gates were computed using
         # the combined hidden states from both the image and text branches. Here, each
         # branch computes its gate using only its own hidden state.
-        hidden_states[i], gates[i] = self.norm(hidden_state, emb=tembs[i])
-        mlp_hidden_states[i] = self.act_mlp(self.proj_mlp(hidden_states[i]))
+        with specify_lora((self.norm.linear, self.proj_mlp), adapters[i]):
+            hidden_states[i], gates[i] = self.norm(hidden_state, emb=tembs[i])
+            mlp_hidden_states[i] = self.act_mlp(self.proj_mlp(hidden_states[i]))
 
-    attn_outputs = attn_forward(self.attn, hidden_states, position_embs=position_embs)
+    attn_outputs = attn_forward(
+        self.attn, hidden_states, adapters, position_embs=position_embs
+    )
 
     for i in range(len(hidden_states)):
-        h = torch.cat([attn_outputs[i], mlp_hidden_states[i]], dim=2)
-        hidden_states[i] = gates[i].unsqueeze(1) * self.proj_out(h) + residual[i]
-        hidden_states[i] = clip_hidden_states(hidden_states[i])
+        with specify_lora((self.proj_out,), adapters[i]):
+            h = torch.cat([attn_outputs[i], mlp_hidden_states[i]], dim=2)
+            hidden_states[i] = gates[i].unsqueeze(1) * self.proj_out(h) + residual[i]
+            hidden_states[i] = clip_hidden_states(hidden_states[i])
 
     return hidden_states
 
@@ -173,15 +233,20 @@ def tranformer_forward(
     pooled_projections: List[torch.Tensor] = None,
     timesteps: List[torch.LongTensor] = None,
     guidances: List[torch.Tensor] = None,
+    adapters: List[str] = None,
     **kwargs: dict,
 ):
     self = transformer
     txt_n = len(text_features) if text_features is not None else 0
 
+    adapters = adapters or [None] * (txt_n + len(image_features))
+    assert len(adapters) == len(timesteps)
+
     # Preprocess the image_features
     image_hidden_states = []
-    for image_feature in image_features:
-        image_hidden_states.append(self.x_embedder(image_feature))
+    for i, image_feature in enumerate(image_features):
+        with specify_lora((self.x_embedder,), adapters[i + txt_n]):
+            image_hidden_states.append(self.x_embedder(image_feature))
 
     # Preprocess the text_features
     text_hidden_states = []
@@ -192,6 +257,7 @@ def tranformer_forward(
     assert len(timesteps) == len(image_features) + len(text_features)
 
     def get_temb(timestep, guidance, pooled_projection):
+        timestep = timestep.to(image_hidden_states[0].dtype) * 1000
         if guidance is not None:
             guidance = guidance.to(image_hidden_states[0].dtype) * 1000
             return self.time_text_embed(timestep, guidance, pooled_projection)
@@ -216,6 +282,7 @@ def tranformer_forward(
             "text_hidden_states": text_hidden_states,
             "tembs": tembs,
             "position_embs": position_embs,
+            "adapters": adapters,
         }
         if self.training and self.gradient_checkpointing:
             image_hidden_states, text_hidden_states = torch.utils.checkpoint.checkpoint(
@@ -232,6 +299,7 @@ def tranformer_forward(
             "hidden_states": all_hidden_states,
             "tembs": tembs,
             "position_embs": position_embs,
+            "adapters": adapters,
         }
         if self.training and self.gradient_checkpointing:
             all_hidden_states = torch.utils.checkpoint.checkpoint(
@@ -267,6 +335,10 @@ def generate(
     callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
     callback_on_step_end_tensor_inputs: List[str] = ["latents"],
     max_sequence_length: int = 512,
+    # Condition Parameters (Optional)
+    adapters: Optional[List[str]] = None,
+    conditions: List[Condition] = [],
+    image_guidance_scale: float = 1.0,
     **params: dict,
 ):
     self = pipeline
@@ -327,6 +399,18 @@ def generate(
         latents,
     )
 
+    # Prepare conditions
+    c_latents, c_ids, c_timesteps = ([], [], [])
+    c_projections, c_guidances, c_adapters = ([], [], [])
+    for condition in conditions:
+        tokens, ids = condition.encode(self)
+        c_latents.append(tokens)  # [batch_size, token_n, token_dim]
+        c_ids.append(ids)  # [token_n, id_dim(3)]
+        c_timesteps.append(torch.zeros([1], device=device))
+        c_projections.append(pooled_prompt_embeds)
+        c_guidances.append(torch.ones([1], device=device))
+        c_adapters.append(condition.adapter)
+
     # Prepare timesteps
     sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
     image_seq_len = latents.shape[1]
@@ -338,12 +422,7 @@ def generate(
         self.scheduler.config.max_shift,
     )
     timesteps, num_inference_steps = retrieve_timesteps(
-        self.scheduler,
-        num_inference_steps,
-        device,
-        timesteps,
-        sigmas,
-        mu=mu,
+        self.scheduler, num_inference_steps, device, timesteps, sigmas, mu=mu
     )
     num_warmup_steps = max(
         len(timesteps) - num_inference_steps * self.scheduler.order, 0
@@ -354,7 +433,7 @@ def generate(
     with self.progress_bar(total=num_inference_steps) as progress_bar:
         for i, t in enumerate(timesteps):
             # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-            timestep = t.expand(latents.shape[0]).to(latents.dtype)
+            timestep = t.expand(latents.shape[0]).to(latents.dtype) / 1000
 
             # handle guidance
             if self.transformer.config.guidance_embeds:
@@ -365,15 +444,34 @@ def generate(
 
             noise_pred = tranformer_forward(
                 self.transformer,
-                image_features=[latents],
+                image_features=[latents, *c_latents],
                 text_features=[prompt_embeds],
-                img_ids=[latent_image_ids],
+                img_ids=[latent_image_ids, *c_ids],
                 txt_ids=[text_ids],
-                timesteps=[timestep, timestep],
-                pooled_projections=[pooled_prompt_embeds, pooled_prompt_embeds],
-                guidances=[guidance, guidance],
+                timesteps=[timestep, timestep, *c_timesteps],
+                pooled_projections=[*[pooled_prompt_embeds] * 2, *c_projections],
+                guidances=[guidance, guidance, *c_guidances],
                 return_dict=False,
+                adapters=[adapters, adapters, *c_adapters],
             )[0]
+
+
+            if image_guidance_scale != 1.0:
+                uncondition_latents = condition.encode(self, empty=True)[0]
+                unc_pred = tranformer_forward(
+                    self.transformer,
+                    image_features=[latents, uncondition_latents],
+                    text_features=[prompt_embeds],
+                    img_ids=[latent_image_ids, *c_ids],
+                    txt_ids=[text_ids],
+                    timesteps=[timestep, timestep, *c_timesteps],
+                    pooled_projections=[*[pooled_prompt_embeds] * 2, *c_projections],
+                    guidances=[guidance, guidance, *c_guidances],
+                    return_dict=False,
+                    adapters=[adapters, adapters, *c_adapters],
+                )[0]
+
+                noise_pred = unc_pred + image_guidance_scale * (noise_pred - unc_pred)
 
             # compute the previous noisy sample x_t -> x_t-1
             latents_dtype = latents.dtype

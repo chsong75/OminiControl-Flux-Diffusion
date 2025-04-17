@@ -354,7 +354,7 @@ def generate(
     with self.progress_bar(total=num_inference_steps) as progress_bar:
         for i, t in enumerate(timesteps):
             # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-            timestep = t.expand(latents.shape[0]).to(latents.dtype)
+            timestep = t.expand(latents.shape[0]).to(latents.dtype) / 1000
 
             # handle guidance
             if self.transformer.config.guidance_embeds:
