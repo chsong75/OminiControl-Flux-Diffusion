@@ -19,7 +19,7 @@
 > and 
 > [Xinchao Wang](https://sites.google.com/site/sitexinchaowang/)
 > <br>
-> [Learning and Vision Lab](http://lv-nus.org/), National University of Singapore
+> [xML Lab](https://sites.google.com/view/xml-nus), National University of Singapore
 > <br>
 
 
