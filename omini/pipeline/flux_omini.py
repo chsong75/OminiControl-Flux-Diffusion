@@ -1,7 +1,7 @@
 import torch
-from diffusers.pipelines import FluxPipeline
 from typing import List, Union, Optional, Dict, Any, Callable, Type
 
+from diffusers.pipelines import FluxPipeline
 from diffusers.pipelines.flux.pipeline_flux import (
     FluxPipelineOutput,
     FluxTransformer2DModel,
@@ -13,11 +13,9 @@ from diffusers.models.attention_processor import Attention, F
 from diffusers.models.embeddings import apply_rotary_emb
 
 from peft.tuners.tuners_utils import BaseTunerLayer
-
 from accelerate.utils import is_torch_version
 
 from .tools import clip_hidden_states
-
 from .condition import Condition
 
 
@@ -111,9 +109,8 @@ def attn_forward(
 
     # Apply rotary embedding
     if position_embs is not None:
-        for i, (query, key) in enumerate(zip(queries, keys)):
-            queries[i] = apply_rotary_emb(query, position_embs[i])
-            keys[i] = apply_rotary_emb(key, position_embs[i])
+        queries = [apply_rotary_emb(q, position_embs[i]) for i, q in enumerate(queries)]
+        keys = [apply_rotary_emb(k, position_embs[i]) for i, k in enumerate(keys)]
 
     # Attention computation
     attn_output = F.scaled_dot_product_attention(
@@ -122,21 +119,22 @@ def attn_forward(
     attn_output = attn_output.transpose(1, 2).reshape(bs, -1, attn.heads * head_dim)
 
     # Reshape attention output to match the original hidden states
-    offset = 0
+    offset, h_out, h2_out = 0, [], []
+
     for i, hidden_state in enumerate(hidden_states2):
-        hidden_states2[i] = attn_output[:, offset : offset + hidden_state.shape[1]]
-        hidden_states2[i] = attn.to_add_out(hidden_states2[i])
+        h2 = attn_output[:, offset : offset + hidden_state.shape[1]]
+        h2_out.append(attn.to_add_out(h2))
         offset += hidden_state.shape[1]
 
     for i, hidden_state in enumerate(hidden_states):
-        hidden_states[i] = attn_output[:, offset : offset + hidden_state.shape[1]]
+        h = attn_output[:, offset : offset + hidden_state.shape[1]]
         if hasattr(attn, "to_out"):
             with specify_lora((attn.to_out[0],), adapters[i + h2_n]):
-                hidden_states[i] = attn.to_out[0](hidden_states[i])
-                hidden_states[i] = attn.to_out[1](hidden_states[i])
+                h = attn.to_out[1](attn.to_out[0](h))
+        h_out.append(h)
         offset += hidden_state.shape[1]
 
-    return (hidden_states, hidden_states2) if hidden_states2 else hidden_states
+    return (h_out, h2_out) if hidden_states2 else h_out
 
 
 def block_forward(
@@ -149,15 +147,14 @@ def block_forward(
 ):
     txt_n = len(text_hidden_states)
 
-    img_variables = [[None for _ in range(5)] for _ in image_hidden_states]
-    txt_variables = [[None for _ in range(5)] for _ in text_hidden_states]
+    img_variables, txt_variables = [], []
 
     for i, text_h in enumerate(text_hidden_states):
-        txt_variables[i] = self.norm1_context(text_h, emb=tembs[i])
+        txt_variables.append(self.norm1_context(text_h, emb=tembs[i]))
 
     for i, image_h in enumerate(image_hidden_states):
         with specify_lora((self.norm1.linear,), adapters[i + txt_n]):
-            img_variables[i] = self.norm1(image_h, emb=tembs[i + txt_n])
+            img_variables.append(self.norm1(image_h, emb=tembs[i + txt_n]))
 
     # Attention.
     img_attn_output, txt_attn_output = attn_forward(
@@ -168,28 +165,27 @@ def block_forward(
         adapters=adapters,
     )
 
+    text_out = []
     for i in range(len(text_hidden_states)):
-        norm_h, gate_msa, shift_mlp, scale_mlp, gate_mlp = txt_variables[i]
-        text_hidden_states[i] += txt_attn_output[i] * gate_msa.unsqueeze(1)
+        _, gate_msa, shift_mlp, scale_mlp, gate_mlp = txt_variables[i]
+        text_h = text_hidden_states[i] + txt_attn_output[i] * gate_msa.unsqueeze(1)
         norm_h = (
-            self.norm2_context(text_hidden_states[i]) * (1 + scale_mlp[:, None])
-            + shift_mlp[:, None]
+            self.norm2_context(text_h) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
         )
-        text_hidden_states[i] += self.ff_context(norm_h) * gate_mlp.unsqueeze(1)
-        text_hidden_states[i] = clip_hidden_states(text_hidden_states[i])
+        text_h = self.ff_context(norm_h) * gate_mlp.unsqueeze(1) + text_h
+        text_out.append(clip_hidden_states(text_h))
 
+    image_out = []
     for i in range(len(image_hidden_states)):
-        norm_h, gate_msa, shift_mlp, scale_mlp, gate_mlp = img_variables[i]
-        image_hidden_states[i] += img_attn_output[i] * gate_msa.unsqueeze(1)
-        norm_h = (
-            self.norm2(image_hidden_states[i]) * (1 + scale_mlp[:, None])
-            + shift_mlp[:, None]
-        )
+        _, gate_msa, shift_mlp, scale_mlp, gate_mlp = img_variables[i]
+        image_h = (
+            image_hidden_states[i] + img_attn_output[i] * gate_msa.unsqueeze(1)
+        ).to(image_hidden_states[i].dtype)
+        norm_h = self.norm2(image_h) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
         with specify_lora((self.ff.net[2],), adapters[i + txt_n]):
-            image_hidden_states[i] += self.ff(norm_h) * gate_mlp.unsqueeze(1)
-        image_hidden_states[i] = clip_hidden_states(image_hidden_states[i])
-
-    return image_hidden_states, text_hidden_states
+            image_h = image_h + self.ff(norm_h) * gate_mlp.unsqueeze(1)
+        image_out.append(clip_hidden_states(image_h))
+    return image_out, text_out
 
 
 def single_block_forward(
@@ -199,32 +195,34 @@ def single_block_forward(
     adapters: List[str],
     position_embs=None,
 ):
-    residual = [h for h in hidden_states]
     mlp_hidden_states, gates = [[None for _ in hidden_states] for _ in range(2)]
 
+    hidden_state_norm = []
     for i, hidden_state in enumerate(hidden_states):
         # [NOTE]!: This function's output is slightly DIFFERENT from the original
         # FLUX version. In the original implementation, the gates were computed using
         # the combined hidden states from both the image and text branches. Here, each
         # branch computes its gate using only its own hidden state.
         with specify_lora((self.norm.linear, self.proj_mlp), adapters[i]):
-            hidden_states[i], gates[i] = self.norm(hidden_state, emb=tembs[i])
-            mlp_hidden_states[i] = self.act_mlp(self.proj_mlp(hidden_states[i]))
+            h_norm, gates[i] = self.norm(hidden_state, emb=tembs[i])
+            mlp_hidden_states[i] = self.act_mlp(self.proj_mlp(h_norm))
+        hidden_state_norm.append(h_norm)
 
     attn_outputs = attn_forward(
-        self.attn, hidden_states, adapters, position_embs=position_embs
+        self.attn, hidden_state_norm, adapters, position_embs=position_embs
     )
 
+    h_out = []
     for i in range(len(hidden_states)):
         with specify_lora((self.proj_out,), adapters[i]):
             h = torch.cat([attn_outputs[i], mlp_hidden_states[i]], dim=2)
-            hidden_states[i] = gates[i].unsqueeze(1) * self.proj_out(h) + residual[i]
-            hidden_states[i] = clip_hidden_states(hidden_states[i])
+            h = gates[i].unsqueeze(1) * self.proj_out(h) + hidden_states[i]
+            h_out.append(clip_hidden_states(h))
 
-    return hidden_states
+    return h_out
 
 
-def tranformer_forward(
+def transformer_forward(
     transformer: FluxTransformer2DModel,
     image_features: List[torch.Tensor],
     text_features: List[torch.Tensor] = None,
@@ -442,7 +440,7 @@ def generate(
             else:
                 guidance = None
 
-            noise_pred = tranformer_forward(
+            noise_pred = transformer_forward(
                 self.transformer,
                 image_features=[latents, *c_latents],
                 text_features=[prompt_embeds],
@@ -455,10 +453,9 @@ def generate(
                 adapters=[adapters, adapters, *c_adapters],
             )[0]
 
-
             if image_guidance_scale != 1.0:
                 uncondition_latents = condition.encode(self, empty=True)[0]
-                unc_pred = tranformer_forward(
+                unc_pred = transformer_forward(
                     self.transformer,
                     image_features=[latents, uncondition_latents],
                     text_features=[prompt_embeds],

@@ -116,22 +116,30 @@ def block_forward(
 
     for i in range(len(text_hidden_states)):
         norm_h, gate_msa, shift_mlp, scale_mlp, gate_mlp = txt_variables[i]
-        text_hidden_states[i] += txt_attn_output[i] * gate_msa.unsqueeze(1)
+        text_hidden_states[i] = (
+            txt_attn_output[i] * gate_msa.unsqueeze(1) + text_hidden_states[i]
+        )
         norm_h = (
             self.norm2_context(text_hidden_states[i]) * (1 + scale_mlp[:, None])
             + shift_mlp[:, None]
         )
-        text_hidden_states[i] += self.ff_context(norm_h) * gate_mlp.unsqueeze(1)
+        text_hidden_states[i] = (
+            self.ff_context(norm_h) * gate_mlp.unsqueeze(1) + text_hidden_states[i]
+        )
         text_hidden_states[i] = clip_hidden_states(text_hidden_states[i])
 
     for i in range(len(image_hidden_states)):
         norm_h, gate_msa, shift_mlp, scale_mlp, gate_mlp = img_variables[i]
-        image_hidden_states[i] += img_attn_output[i] * gate_msa.unsqueeze(1)
+        image_hidden_states[i] = (
+            img_attn_output[i] * gate_msa.unsqueeze(1) + image_hidden_states[i]
+        )
         norm_h = (
             self.norm2(image_hidden_states[i]) * (1 + scale_mlp[:, None])
             + shift_mlp[:, None]
         )
-        image_hidden_states[i] += self.ff(norm_h) * gate_mlp.unsqueeze(1)
+        image_hidden_states[i] = (
+            self.ff(norm_h) * gate_mlp.unsqueeze(1) + image_hidden_states[i]
+        )
         image_hidden_states[i] = clip_hidden_states(image_hidden_states[i])
 
     return image_hidden_states, text_hidden_states
@@ -164,7 +172,7 @@ def single_block_forward(
     return hidden_states
 
 
-def tranformer_forward(
+def transformer_forward(
     transformer: FluxTransformer2DModel,
     image_features: List[torch.Tensor],
     text_features: List[torch.Tensor] = None,
@@ -363,7 +371,7 @@ def generate(
             else:
                 guidance = None
 
-            noise_pred = tranformer_forward(
+            noise_pred = transformer_forward(
                 self.transformer,
                 image_features=[latents],
                 text_features=[prompt_embeds],
