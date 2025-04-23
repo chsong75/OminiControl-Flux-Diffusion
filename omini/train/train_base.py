@@ -15,8 +15,12 @@ from datasets import load_dataset
 
 from .model import BaseModel, TrainingCallback, get_rank, get_config, init_wandb
 from ..pipeline.tools import encode_images, prepare_text_input
-from ..pipeline.flux_omini import transformer_forward, generate
-from ..pipeline.condition import Condition, convert_to_condition
+from ..pipeline.flux_omini import (
+    Condition,
+    convert_to_condition,
+    transformer_forward,
+    generate,
+)
 
 
 class Subject200KDataset(Dataset):

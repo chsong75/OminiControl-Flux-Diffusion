@@ -1,5 +1,5 @@
 import torch
-from typing import List, Union, Optional, Dict, Any, Callable, Type
+from typing import List, Union, Optional, Dict, Any, Callable, Type, Tuple
 
 from diffusers.pipelines import FluxPipeline
 from diffusers.pipelines.flux.pipeline_flux import (
@@ -11,12 +11,81 @@ from diffusers.pipelines.flux.pipeline_flux import (
 )
 from diffusers.models.attention_processor import Attention, F
 from diffusers.models.embeddings import apply_rotary_emb
+from transformers import pipeline
 
 from peft.tuners.tuners_utils import BaseTunerLayer
 from accelerate.utils import is_torch_version
 
-from .tools import clip_hidden_states
-from .condition import Condition
+import cv2
+
+from PIL import Image, ImageFilter
+
+from .tools import clip_hidden_states, encode_images
+
+
+def convert_to_condition(
+    condition_type: str,
+    raw_img: Union[Image.Image, torch.Tensor],
+    blur_radius: Optional[int] = 5,
+) -> Union[Image.Image, torch.Tensor]:
+    if condition_type == "depth":
+        global depth_pipe
+        depth_pipe = depth_pipe or pipeline(
+            task="depth-estimation",
+            model="LiheYoung/depth-anything-small-hf",
+            device="cpu",  # Use "cpu" to enable parallel processing
+        )
+        source_image = raw_img.convert("RGB")
+        condition_img = depth_pipe(source_image)["depth"].convert("RGB")
+        return condition_img
+    elif condition_type == "canny":
+        img = np.array(raw_img)
+        edges = cv2.Canny(img, 100, 200)
+        edges = Image.fromarray(edges).convert("RGB")
+        return edges
+    elif condition_type == "coloring":
+        return raw_img.convert("L").convert("RGB")
+    elif condition_type == "deblurring":
+        condition_image = (
+            raw_img.convert("RGB")
+            .filter(ImageFilter.GaussianBlur(blur_radius))
+            .convert("RGB")
+        )
+        return condition_image
+    else:
+        print("Warning: Returning the raw image.")
+        return raw_img.convert("RGB")
+
+
+class Condition(object):
+    def __init__(
+        self,
+        condition: Union[Image.Image, torch.Tensor],
+        adapter_setting: Union[str, dict],
+        position_delta=None,
+        position_scale=1.0,
+    ) -> None:
+        self.condition = condition
+        self.adapter = adapter_setting
+        self.position_delta = position_delta
+        self.position_scale = position_scale
+
+    def encode(
+        self, pipe: FluxPipeline, empty: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor, int]:
+        condition_empty = Image.new("RGB", self.condition.size, (0, 0, 0))
+        tokens, ids = encode_images(pipe, condition_empty if empty else self.condition)
+
+        if self.position_delta is not None:
+            ids[:, 1] += self.position_delta[0]
+            ids[:, 2] += self.position_delta[1]
+
+        if self.position_scale != 1.0:
+            scale_bias = (self.position_scale - 1.0) / 2
+            ids[:, 1:] *= self.position_scale
+            ids[:, 1:] += scale_bias
+
+        return tokens, ids
 
 
 class specify_lora:
