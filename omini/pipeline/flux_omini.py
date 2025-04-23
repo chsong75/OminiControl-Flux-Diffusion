@@ -125,6 +125,10 @@ def attn_forward(
     hidden_states2: Optional[List[torch.FloatTensor]] = [],
     position_embs: Optional[List[torch.Tensor]] = None,
     group_mask: Optional[torch.Tensor] = None,
+    cache_mode: Optional[str] = None,
+    # to determine whether to cache the keys and values for this branch
+    to_cache: Optional[List[torch.Tensor]] = None,
+    cache_storage: Optional[List[torch.Tensor]] = None,
     **kwargs: dict,
 ) -> torch.FloatTensor:
     bs, _, _ = hidden_states[0].shape
@@ -133,7 +137,7 @@ def attn_forward(
     queries, keys, values = [], [], []
 
     # Prepare query, key, value for each encoder hidden state (text branch)
-    for hidden_state in hidden_states2:
+    for i, hidden_state in enumerate(hidden_states2):
         query = attn.add_q_proj(hidden_state)
         key = attn.add_k_proj(hidden_state)
         value = attn.add_v_proj(hidden_state)
@@ -170,6 +174,12 @@ def attn_forward(
         queries = [apply_rotary_emb(q, position_embs[i]) for i, q in enumerate(queries)]
         keys = [apply_rotary_emb(k, position_embs[i]) for i, k in enumerate(keys)]
 
+    if cache_mode == "write":
+        for i, (k, v) in enumerate(zip(keys, values)):
+            if to_cache[i]:
+                cache_storage[attn.cache_idx][0].append(k)
+                cache_storage[attn.cache_idx][1].append(v)
+
     attn_outputs = []
     for i, query in enumerate(queries):
         keys_, values_ = [], []
@@ -179,6 +189,9 @@ def attn_forward(
                 continue
             keys_.append(k)
             values_.append(v)
+        if cache_mode == "read":
+            keys_.extend(cache_storage[attn.cache_idx][0])
+            values_.extend(cache_storage[attn.cache_idx][1])
         # Add keys and values from cache TODO
         # Attention computation
         attn_output = F.scaled_dot_product_attention(
@@ -417,6 +430,7 @@ def generate(
     conditions: List[Condition] = [],
     image_guidance_scale: float = 1.0,
     transformer_kwargs: Optional[Dict[str, Any]] = None,
+    kv_cache=False,
     **params: dict,
 ):
     self = pipeline
@@ -478,11 +492,13 @@ def generate(
     )
 
     # Prepare conditions
-    c_latents, c_ids, c_timesteps = ([], [], [])
+    c_latents, uc_latents, c_ids, c_timesteps = ([], [], [], [])
     c_projections, c_guidances, c_adapters = ([], [], [])
     for condition in conditions:
         tokens, ids = condition.encode(self)
         c_latents.append(tokens)  # [batch_size, token_n, token_dim]
+        # Empty condition for unconditioned image
+        uc_latents.append(condition.encode(self, empty=True)[0])
         c_ids.append(ids)  # [token_n, id_dim(3)]
         c_timesteps.append(torch.zeros([1], device=device))
         c_projections.append(pooled_prompt_embeds)
@@ -507,6 +523,21 @@ def generate(
     )
     self._num_timesteps = len(timesteps)
 
+    if kv_cache:
+        attn_counter = 0
+        for module in self.transformer.modules():
+            if isinstance(module, Attention):
+                setattr(module, "cache_idx", attn_counter)
+                attn_counter += 1
+        kv_cond = [[[], []] for _ in range(attn_counter)]
+        kv_uncond = [[[], []] for _ in range(attn_counter)]
+
+        def clear_cache():
+            for storage in [kv_cond, kv_uncond]:
+                for kesy, values in storage:
+                    kesy.clear()
+                    values.clear()
+
     # Denoising loop
     with self.progress_bar(total=num_inference_steps) as progress_bar:
         for i, t in enumerate(timesteps):
@@ -520,33 +551,46 @@ def generate(
             else:
                 guidance = None
 
+            if kv_cache:
+                mode = "write" if i == 0 else "read"
+                if mode == "write":
+                    clear_cache()
+            use_cond = not (kv_cache) or mode == "write"
+
             noise_pred = transformer_forward(
                 self.transformer,
-                image_features=[latents, *c_latents],
+                image_features=[latents] + (c_latents if use_cond else []),
                 text_features=[prompt_embeds],
-                img_ids=[latent_image_ids, *c_ids],
+                img_ids=[latent_image_ids] + (c_ids if use_cond else []),
                 txt_ids=[text_ids],
-                timesteps=[timestep, timestep, *c_timesteps],
-                pooled_projections=[*[pooled_prompt_embeds] * 2, *c_projections],
-                guidances=[guidance, guidance, *c_guidances],
+                timesteps=[timestep, timestep] + (c_timesteps if use_cond else []),
+                pooled_projections=[pooled_prompt_embeds] * 2
+                + (c_projections if use_cond else []),
+                guidances=[guidance] * 2 + (c_guidances if use_cond else []),
                 return_dict=False,
-                adapters=[adapters, adapters, *c_adapters],
+                adapters=[adapters] * 2 + (c_adapters if use_cond else []),
+                cache_mode=mode if kv_cache else None,
+                cache_storage=kv_cond if kv_cache else None,
+                to_cache=[False, False, *[True] * len(c_latents)],
                 **transformer_kwargs,
             )[0]
 
             if image_guidance_scale != 1.0:
-                uncondition_latents = condition.encode(self, empty=True)[0]
                 unc_pred = transformer_forward(
                     self.transformer,
-                    image_features=[latents, uncondition_latents],
+                    image_features=[latents] + (uc_latents if use_cond else []),
                     text_features=[prompt_embeds],
-                    img_ids=[latent_image_ids, *c_ids],
+                    img_ids=[latent_image_ids] + (c_ids if use_cond else []),
                     txt_ids=[text_ids],
-                    timesteps=[timestep, timestep, *c_timesteps],
-                    pooled_projections=[*[pooled_prompt_embeds] * 2, *c_projections],
-                    guidances=[guidance, guidance, *c_guidances],
+                    timesteps=[timestep, timestep] + (c_timesteps if use_cond else []),
+                    pooled_projections=[pooled_prompt_embeds] * 2
+                    + (c_projections if use_cond else []),
+                    guidances=[guidance] * 2 + (c_guidances if use_cond else []),
                     return_dict=False,
-                    adapters=[adapters, adapters, *c_adapters],
+                    adapters=[adapters] * 2 + (c_adapters if use_cond else []),
+                    cache_mode=mode if kv_cache else None,
+                    cache_storage=kv_uncond if kv_cache else None,
+                    to_cache=[False, False, *[True] * len(c_latents)],
                     **transformer_kwargs,
                 )[0]
 
