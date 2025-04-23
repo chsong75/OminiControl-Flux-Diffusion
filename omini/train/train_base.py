@@ -277,6 +277,15 @@ class OminiModel(BaseModel):
                 else None
             )
 
+        group_mask = None
+        if self.model_config.get("causal_attn", False):
+            # Group sequence: text, image, and condition
+            group_mask = [
+                [True, True, True],
+                [True, True, True],
+                [False, False, True],
+            ]
+
         # Forward pass
         transformer_out = transformer_forward(
             self.transformer,
@@ -293,6 +302,7 @@ class OminiModel(BaseModel):
             # The LoRA adapter names of each branch
             adapters=[None, None, "default"],
             return_dict=False,
+            group_mask=group_mask,
         )
         pred = transformer_out[0]
 
