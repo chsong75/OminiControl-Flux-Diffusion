@@ -16,6 +16,8 @@ from transformers import pipeline
 from peft.tuners.tuners_utils import BaseTunerLayer
 from accelerate.utils import is_torch_version
 
+from contextlib import contextmanager
+
 import cv2
 
 from PIL import Image, ImageFilter
@@ -88,47 +90,32 @@ class Condition(object):
         return tokens, ids
 
 
-class specify_lora:
-    def __init__(self, lora_modules: List[BaseTunerLayer], specified_lora) -> None:
-        self.specified_lora = specified_lora
-        self.lora_modules: List[BaseTunerLayer] = [
-            each for each in lora_modules if isinstance(each, BaseTunerLayer)
-        ]
-        # To save the original scaling values
-        self.scales = [
-            {
-                active_adapter: lora_module.scaling[active_adapter]
-                for active_adapter in lora_module.active_adapters
-                if active_adapter in lora_module.scaling
-            }
-            for lora_module in self.lora_modules
-        ]
-
-    def __enter__(self) -> None:
-        for lora_module in self.lora_modules:
-            if not isinstance(lora_module, BaseTunerLayer):
-                continue
-            for active_adapter in lora_module.active_adapters:
-                if active_adapter not in lora_module.scaling:
-                    continue
-                lora_module.scaling[active_adapter] = (
-                    1 if active_adapter == self.specified_lora else 0
-                )
-
-    def __exit__(
-        self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[Any],
-    ) -> None:
-        # Restore the original scaling values
-        for i, lora_module in enumerate(self.lora_modules):
-            if not isinstance(lora_module, BaseTunerLayer):
-                continue
-            for active_adapter in lora_module.active_adapters:
-                if active_adapter not in lora_module.scaling:
-                    continue
-                lora_module.scaling[active_adapter] = self.scales[i][active_adapter]
+@contextmanager
+def specify_lora(lora_modules: List[BaseTunerLayer], specified_lora):
+    # Filter valid lora modules
+    valid_lora_modules = [m for m in lora_modules if isinstance(m, BaseTunerLayer)]
+    # Save original scales
+    original_scales = [
+        {
+            adapter: module.scaling[adapter]
+            for adapter in module.active_adapters
+            if adapter in module.scaling
+        }
+        for module in valid_lora_modules
+    ]
+    # Enter context: adjust scaling
+    for module in valid_lora_modules:
+        for adapter in module.active_adapters:
+            if adapter in module.scaling:
+                module.scaling[adapter] = 1 if adapter == specified_lora else 0
+    try:
+        yield
+    finally:
+        # Exit context: restore original scales
+        for module, scales in zip(valid_lora_modules, original_scales):
+            for adapter in module.active_adapters:
+                if adapter in module.scaling:
+                    module.scaling[adapter] = scales[adapter]
 
 
 def attn_forward(
@@ -429,6 +416,7 @@ def generate(
     adapters: Optional[List[str]] = None,
     conditions: List[Condition] = [],
     image_guidance_scale: float = 1.0,
+    transformer_kwargs: Optional[Dict[str, Any]] = None,
     **params: dict,
 ):
     self = pipeline
@@ -543,6 +531,7 @@ def generate(
                 guidances=[guidance, guidance, *c_guidances],
                 return_dict=False,
                 adapters=[adapters, adapters, *c_adapters],
+                **transformer_kwargs,
             )[0]
 
             if image_guidance_scale != 1.0:
@@ -558,6 +547,7 @@ def generate(
                     guidances=[guidance, guidance, *c_guidances],
                     return_dict=False,
                     adapters=[adapters, adapters, *c_adapters],
+                    **transformer_kwargs,
                 )[0]
 
                 noise_pred = unc_pred + image_guidance_scale * (noise_pred - unc_pred)
