@@ -138,6 +138,7 @@ def attn_forward(
     hidden_states2: Optional[List[torch.FloatTensor]] = [],
     position_embs: Optional[List[torch.Tensor]] = None,
     group_mask: Optional[torch.Tensor] = None,
+    **kwargs: dict,
 ) -> torch.FloatTensor:
     bs, _, _ = hidden_states[0].shape
     h2_n = len(hidden_states2)
@@ -223,6 +224,7 @@ def block_forward(
     adapters: List[str],
     position_embs=None,
     attn_forward=attn_forward,
+    **kwargs: dict,
 ):
     txt_n = len(text_hidden_states)
 
@@ -242,6 +244,7 @@ def block_forward(
         hidden_states2=[each[0] for each in txt_variables],
         position_embs=position_embs,
         adapters=adapters,
+        **kwargs,
     )
 
     text_out = []
@@ -274,6 +277,7 @@ def single_block_forward(
     adapters: List[str],
     position_embs=None,
     attn_forward=attn_forward,
+    **kwargs: dict,
 ):
     mlp_hidden_states, gates = [[None for _ in hidden_states] for _ in range(2)]
 
@@ -289,7 +293,7 @@ def single_block_forward(
         hidden_state_norm.append(h_norm)
 
     attn_outputs = attn_forward(
-        self.attn, hidden_state_norm, adapters, position_embs=position_embs
+        self.attn, hidden_state_norm, adapters, position_embs=position_embs, **kwargs
     )
 
     h_out = []
@@ -358,7 +362,7 @@ def transformer_forward(
 
     # dual branch blocks
     for block in self.transformer_blocks:
-        kwargs = {
+        block_kwargs = {
             "self": block,
             "image_hidden_states": image_hidden_states,
             "text_hidden_states": text_hidden_states,
@@ -366,31 +370,33 @@ def transformer_forward(
             "position_embs": position_embs,
             "adapters": adapters,
             "attn_forward": attn_forward,
+            **kwargs,
         }
         if self.training and self.gradient_checkpointing:
             image_hidden_states, text_hidden_states = torch.utils.checkpoint.checkpoint(
-                block_forward, **kwargs, **gckpt_kwargs
+                block_forward, **block_kwargs, **gckpt_kwargs
             )
         else:
-            image_hidden_states, text_hidden_states = block_forward(**kwargs)
+            image_hidden_states, text_hidden_states = block_forward(**block_kwargs)
 
     # combine image and text hidden states then pass through the single transformer blocks
     all_hidden_states = [*text_hidden_states, *image_hidden_states]
     for block in self.single_transformer_blocks:
-        kwargs = {
+        block_kwargs = {
             "self": block,
             "hidden_states": all_hidden_states,
             "tembs": tembs,
             "position_embs": position_embs,
             "adapters": adapters,
             "attn_forward": attn_forward,
+            **kwargs,
         }
         if self.training and self.gradient_checkpointing:
             all_hidden_states = torch.utils.checkpoint.checkpoint(
-                single_block_forward, **kwargs, **gckpt_kwargs
+                single_block_forward, **block_kwargs, **gckpt_kwargs
             )
         else:
-            all_hidden_states = single_block_forward(**kwargs)
+            all_hidden_states = single_block_forward(**block_kwargs)
 
     image_hidden_states = self.norm_out(all_hidden_states[txt_n], tembs[txt_n])
     output = self.proj_out(image_hidden_states)
