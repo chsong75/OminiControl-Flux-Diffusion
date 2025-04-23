@@ -137,6 +137,7 @@ def attn_forward(
     adapters: List[str],
     hidden_states2: Optional[List[torch.FloatTensor]] = [],
     position_embs: Optional[List[torch.Tensor]] = None,
+    group_mask: Optional[torch.Tensor] = None,
 ) -> torch.FloatTensor:
     bs, _, _ = hidden_states[0].shape
     h2_n = len(hidden_states2)
@@ -181,29 +182,37 @@ def attn_forward(
         queries = [apply_rotary_emb(q, position_embs[i]) for i, q in enumerate(queries)]
         keys = [apply_rotary_emb(k, position_embs[i]) for i, k in enumerate(keys)]
 
-    # Attention computation
-    attn_output = F.scaled_dot_product_attention(
-        torch.cat(queries, dim=2), torch.cat(keys, dim=2), torch.cat(values, dim=2)
-    ).to(query.dtype)
-    attn_output = attn_output.transpose(1, 2).reshape(bs, -1, attn.heads * head_dim)
+    attn_outputs = []
+    for i, query in enumerate(queries):
+        keys_, values_ = [], []
+        # Add keys and values from other branches
+        for j, (k, v) in enumerate(zip(keys, values)):
+            if group_mask and not group_mask[i, j]:
+                continue
+            keys_.append(k)
+            values_.append(v)
+        # Add keys and values from cache TODO
+        # Attention computation
+        attn_output = F.scaled_dot_product_attention(
+            query, torch.cat(keys_, dim=2), torch.cat(values_, dim=2)
+        ).to(query.dtype)
+        attn_output = attn_output.transpose(1, 2).reshape(bs, -1, attn.heads * head_dim)
+        attn_outputs.append(attn_output)
 
     # Reshape attention output to match the original hidden states
-    offset, h_out, h2_out = 0, [], []
+    h_out, h2_out = [], []
 
     for i, hidden_state in enumerate(hidden_states2):
-        h2 = attn_output[:, offset : offset + hidden_state.shape[1]]
-        h2_out.append(attn.to_add_out(h2))
-        offset += hidden_state.shape[1]
+        h2_out.append(attn.to_add_out(attn_outputs[i]))
 
     for i, hidden_state in enumerate(hidden_states):
-        h = attn_output[:, offset : offset + hidden_state.shape[1]]
+        h = attn_outputs[i + h2_n]
         if hasattr(attn, "to_out"):
             with specify_lora((attn.to_out[0],), adapters[i + h2_n]):
-                h = attn.to_out[1](attn.to_out[0](h))
+                h = attn.to_out[0](h)
         h_out.append(h)
-        offset += hidden_state.shape[1]
 
-    return (h_out, h2_out) if hidden_states2 else h_out
+    return (h_out, h2_out) if h2_n else h_out
 
 
 def block_forward(
@@ -213,6 +222,7 @@ def block_forward(
     tembs: List[torch.FloatTensor],
     adapters: List[str],
     position_embs=None,
+    attn_forward=attn_forward,
 ):
     txt_n = len(text_hidden_states)
 
@@ -263,6 +273,7 @@ def single_block_forward(
     tembs: List[torch.FloatTensor],
     adapters: List[str],
     position_embs=None,
+    attn_forward=attn_forward,
 ):
     mlp_hidden_states, gates = [[None for _ in hidden_states] for _ in range(2)]
 
@@ -301,6 +312,10 @@ def transformer_forward(
     timesteps: List[torch.LongTensor] = None,
     guidances: List[torch.Tensor] = None,
     adapters: List[str] = None,
+    # Assign the function to be used for the forward pass
+    single_block_forward=single_block_forward,
+    block_forward=block_forward,
+    attn_forward=attn_forward,
     **kwargs: dict,
 ):
     self = transformer
@@ -350,6 +365,7 @@ def transformer_forward(
             "tembs": tembs,
             "position_embs": position_embs,
             "adapters": adapters,
+            "attn_forward": attn_forward,
         }
         if self.training and self.gradient_checkpointing:
             image_hidden_states, text_hidden_states = torch.utils.checkpoint.checkpoint(
@@ -367,6 +383,7 @@ def transformer_forward(
             "tembs": tembs,
             "position_embs": position_embs,
             "adapters": adapters,
+            "attn_forward": attn_forward,
         }
         if self.training and self.gradient_checkpointing:
             all_hidden_states = torch.utils.checkpoint.checkpoint(
