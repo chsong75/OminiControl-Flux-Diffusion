@@ -1,7 +1,7 @@
 import torch
-from diffusers.pipelines import FluxPipeline
 from typing import List, Union, Optional, Dict, Any, Callable
 
+from diffusers.pipelines import FluxPipeline
 from diffusers.pipelines.flux.pipeline_flux import (
     FluxPipelineOutput,
     FluxTransformer2DModel,
@@ -61,9 +61,8 @@ def attn_forward(
 
     # Apply rotary embedding
     if position_embs is not None:
-        for i, (query, key) in enumerate(zip(queries, keys)):
-            queries[i] = apply_rotary_emb(query, position_embs[i])
-            keys[i] = apply_rotary_emb(key, position_embs[i])
+        queries = [apply_rotary_emb(q, position_embs[i]) for i, q in enumerate(queries)]
+        keys = [apply_rotary_emb(k, position_embs[i]) for i, k in enumerate(keys)]
 
     # Attention computation
     attn_output = F.scaled_dot_product_attention(
@@ -72,20 +71,21 @@ def attn_forward(
     attn_output = attn_output.transpose(1, 2).reshape(bs, -1, attn.heads * head_dim)
 
     # Reshape attention output to match the original hidden states
-    offset = 0
+    offset, h_out, h2_out = 0, [], []
+
     for i, hidden_state in enumerate(hidden_states2):
-        hidden_states2[i] = attn_output[:, offset : offset + hidden_state.shape[1]]
-        hidden_states2[i] = attn.to_add_out(hidden_states2[i])
+        h2 = attn_output[:, offset : offset + hidden_state.shape[1]]
+        h2_out.append(attn.to_add_out(h2))
         offset += hidden_state.shape[1]
 
     for i, hidden_state in enumerate(hidden_states):
-        hidden_states[i] = attn_output[:, offset : offset + hidden_state.shape[1]]
+        h = attn_output[:, offset : offset + hidden_state.shape[1]]
         if hasattr(attn, "to_out"):
-            hidden_states[i] = attn.to_out[0](hidden_states[i])
-            hidden_states[i] = attn.to_out[1](hidden_states[i])
+            h = attn.to_out[1](attn.to_out[0](h))
+        h_out.append(h)
         offset += hidden_state.shape[1]
 
-    return (hidden_states, hidden_states2) if hidden_states2 else hidden_states
+    return (h_out, h2_out) if hidden_states2 else h_out
 
 
 def block_forward(
@@ -97,14 +97,13 @@ def block_forward(
 ):
     txt_n = len(text_hidden_states)
 
-    img_variables = [[None for _ in range(5)] for _ in image_hidden_states]
-    txt_variables = [[None for _ in range(5)] for _ in text_hidden_states]
+    img_variables, txt_variables = [], []
 
     for i, text_h in enumerate(text_hidden_states):
-        txt_variables[i] = self.norm1_context(text_h, emb=tembs[i])
+        txt_variables.append(self.norm1_context(text_h, emb=tembs[i]))
 
     for i, image_h in enumerate(image_hidden_states):
-        img_variables[i] = self.norm1(image_h, emb=tembs[i + txt_n])
+        img_variables.append(self.norm1(image_h, emb=tembs[i + txt_n]))
 
     # Attention.
     img_attn_output, txt_attn_output = attn_forward(
@@ -114,35 +113,26 @@ def block_forward(
         position_embs=position_embs,
     )
 
+    text_out = []
     for i in range(len(text_hidden_states)):
-        norm_h, gate_msa, shift_mlp, scale_mlp, gate_mlp = txt_variables[i]
-        text_hidden_states[i] = (
-            txt_attn_output[i] * gate_msa.unsqueeze(1) + text_hidden_states[i]
-        )
+        _, gate_msa, shift_mlp, scale_mlp, gate_mlp = txt_variables[i]
+        text_h = text_hidden_states[i] + txt_attn_output[i] * gate_msa.unsqueeze(1)
         norm_h = (
-            self.norm2_context(text_hidden_states[i]) * (1 + scale_mlp[:, None])
-            + shift_mlp[:, None]
+            self.norm2_context(text_h) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
         )
-        text_hidden_states[i] = (
-            self.ff_context(norm_h) * gate_mlp.unsqueeze(1) + text_hidden_states[i]
-        )
-        text_hidden_states[i] = clip_hidden_states(text_hidden_states[i])
+        text_h = self.ff_context(norm_h) * gate_mlp.unsqueeze(1) + text_h
+        text_out.append(clip_hidden_states(text_h))
 
+    image_out = []
     for i in range(len(image_hidden_states)):
-        norm_h, gate_msa, shift_mlp, scale_mlp, gate_mlp = img_variables[i]
-        image_hidden_states[i] = (
-            img_attn_output[i] * gate_msa.unsqueeze(1) + image_hidden_states[i]
-        )
-        norm_h = (
-            self.norm2(image_hidden_states[i]) * (1 + scale_mlp[:, None])
-            + shift_mlp[:, None]
-        )
-        image_hidden_states[i] = (
-            self.ff(norm_h) * gate_mlp.unsqueeze(1) + image_hidden_states[i]
-        )
-        image_hidden_states[i] = clip_hidden_states(image_hidden_states[i])
-
-    return image_hidden_states, text_hidden_states
+        _, gate_msa, shift_mlp, scale_mlp, gate_mlp = img_variables[i]
+        image_h = (
+            image_hidden_states[i] + img_attn_output[i] * gate_msa.unsqueeze(1)
+        ).to(image_hidden_states[i].dtype)
+        norm_h = self.norm2(image_h) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        image_h = image_h + self.ff(norm_h) * gate_mlp.unsqueeze(1)
+        image_out.append(clip_hidden_states(image_h))
+    return image_out, text_out
 
 
 def single_block_forward(
@@ -151,25 +141,29 @@ def single_block_forward(
     tembs: List[torch.FloatTensor],
     position_embs=None,
 ):
-    residual = [h for h in hidden_states]
     mlp_hidden_states, gates = [[None for _ in hidden_states] for _ in range(2)]
 
+    hidden_state_norm = []
     for i, hidden_state in enumerate(hidden_states):
         # [NOTE]!: This function's output is slightly DIFFERENT from the original
         # FLUX version. In the original implementation, the gates were computed using
         # the combined hidden states from both the image and text branches. Here, each
         # branch computes its gate using only its own hidden state.
-        hidden_states[i], gates[i] = self.norm(hidden_state, emb=tembs[i])
-        mlp_hidden_states[i] = self.act_mlp(self.proj_mlp(hidden_states[i]))
+        h_norm, gates[i] = self.norm(hidden_state, emb=tembs[i])
+        mlp_hidden_states[i] = self.act_mlp(self.proj_mlp(h_norm))
+        hidden_state_norm.append(h_norm)
 
-    attn_outputs = attn_forward(self.attn, hidden_states, position_embs=position_embs)
+    attn_outputs = attn_forward(
+        self.attn, hidden_state_norm, position_embs=position_embs
+    )
 
+    h_out = []
     for i in range(len(hidden_states)):
         h = torch.cat([attn_outputs[i], mlp_hidden_states[i]], dim=2)
-        hidden_states[i] = gates[i].unsqueeze(1) * self.proj_out(h) + residual[i]
-        hidden_states[i] = clip_hidden_states(hidden_states[i])
+        h = gates[i].unsqueeze(1) * self.proj_out(h) + hidden_states[i]
+        h_out.append(clip_hidden_states(h))
 
-    return hidden_states
+    return h_out
 
 
 def transformer_forward(
@@ -188,7 +182,7 @@ def transformer_forward(
 
     # Preprocess the image_features
     image_hidden_states = []
-    for image_feature in image_features:
+    for i, image_feature in enumerate(image_features):
         image_hidden_states.append(self.x_embedder(image_feature))
 
     # Preprocess the text_features
@@ -200,6 +194,7 @@ def transformer_forward(
     assert len(timesteps) == len(image_features) + len(text_features)
 
     def get_temb(timestep, guidance, pooled_projection):
+        timestep = timestep.to(image_hidden_states[0].dtype) * 1000
         if guidance is not None:
             guidance = guidance.to(image_hidden_states[0].dtype) * 1000
             return self.time_text_embed(timestep, guidance, pooled_projection)
@@ -346,12 +341,7 @@ def generate(
         self.scheduler.config.max_shift,
     )
     timesteps, num_inference_steps = retrieve_timesteps(
-        self.scheduler,
-        num_inference_steps,
-        device,
-        timesteps,
-        sigmas,
-        mu=mu,
+        self.scheduler, num_inference_steps, device, timesteps, sigmas, mu=mu
     )
     num_warmup_steps = max(
         len(timesteps) - num_inference_steps * self.scheduler.order, 0
