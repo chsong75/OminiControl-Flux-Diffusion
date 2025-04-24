@@ -429,7 +429,7 @@ def generate(
     adapters: Optional[List[str]] = None,
     conditions: List[Condition] = [],
     image_guidance_scale: float = 1.0,
-    transformer_kwargs: Optional[Dict[str, Any]] = None,
+    transformer_kwargs: Optional[Dict[str, Any]] = {},
     kv_cache=False,
     **params: dict,
 ):

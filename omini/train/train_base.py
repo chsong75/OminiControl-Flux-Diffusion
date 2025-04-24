@@ -278,7 +278,7 @@ class OminiModel(BaseModel):
             )
 
         group_mask = None
-        if self.model_config.get("causal_attn", False):
+        if self.model_config.get("independent_condition", False):
             # Group sequence: text, image, and condition
             group_mask = [
                 [True, True, True],
@@ -338,13 +338,13 @@ class OminiModel(BaseModel):
             image = Image.open("assets/test_in.jpg")
             image = image.resize((condition_size, condition_size))
             prompt = "Resting on the picnic table at a lakeside campsite, it's caught in the golden glow of early morning, with mist rising from the water and tall pines casting long shadows behind the scene."
-            condition = Condition(image, adapter, position_delta, position_scale)
+            condition = Condition(image, adapter, [0, -32], position_scale)
             test_list.append((condition, prompt))
             # Test case2
             image = Image.open("assets/test_out.jpg")
             image = image.resize((condition_size, condition_size))
             prompt = "In a bright room. It is placed on a table."
-            condition = Condition(image, adapter, position_delta, position_scale)
+            condition = Condition(image, adapter, [0, -32], position_scale)
             test_list.append((condition, prompt))
         elif condition_type in ["canny", "coloring", "deblurring", "depth"]:
             image = Image.open("assets/vase_hq.jpg")
@@ -392,9 +392,10 @@ class OminiModel(BaseModel):
                 width=target_size,
                 generator=generator,
                 model_config=self.model_config,
+                kv_cache=self.training_config.get("independent_condition", False),
             )
-            save_path = os.path.join(save_path, f"{file_name}_{condition_type}_{i}.jpg")
-            res.images[0].save(save_path)
+            file_path = os.path.join(save_path, f"{file_name}_{condition_type}_{i}.jpg")
+            res.images[0].save(file_path)
 
 
 def main():
