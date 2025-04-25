@@ -205,12 +205,6 @@ class TrainingCallback(L.Callback):
             )
             pl_module.eval()
             pl_module.generate_a_sample(
-                # trainer,
-                # pl_module,
-                f"{self.save_path}/{self.run_name}/output",
-                f"lora_{self.total_steps}",
-                batch["condition_type"][
-                    0
-                ],  # Use the condition type from the current batch
+                f"{self.save_path}/{self.run_name}/output", f"lora_{self.total_steps}"
             )
             pl_module.train()

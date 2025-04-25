@@ -105,11 +105,12 @@ class Subject200KDataset(Dataset):
 
         return {
             "image": self.to_tensor(target_image),
-            "condition": self.to_tensor(condition_img),
-            "condition_type": self.condition_type,
+            "condition_0": self.to_tensor(condition_img),
+            "condition_type_0": self.condition_type,
+            "position_delta_0": np.array(
+                [0, -self.condition_size // 16]
+            ),  # 16 is the downscale factor of the image
             "description": description,
-            # 16 is the downscale factor of the image
-            "position_delta": np.array([0, -self.condition_size // 16]),
             **({"pil_image": image} if self.return_pil_image else {}),
         }
 
@@ -200,10 +201,10 @@ class ImageConditionDataset(Dataset):
 
         return {
             "image": self.to_tensor(image),
-            "condition": self.to_tensor(condition_img),
-            "condition_type": self.condition_type,
+            "condition_0": self.to_tensor(condition_img),
+            "condition_type_0": self.condition_type,
+            "position_delta_0": position_delta,
             "description": description,
-            "position_delta": position_delta,
             **({"pil_image": [image, condition_img]} if self.return_pil_image else {}),
             **({"position_scale": position_scale} if position_scale != 1.0 else {}),
         }
@@ -236,10 +237,16 @@ class OminiModel(BaseModel):
 
     def training_step(self, batch, batch_idx):
         imgs = batch["image"]
-        conditions = batch["condition"]
         prompts = batch["description"]
-        position_delta = batch["position_delta"][0]
-        position_scale = float(batch.get("position_scale", [1.0])[0])
+
+        # Get the conditions and position deltas from the batch
+        conditions, position_deltas, position_scales = [], [], []
+        for i in range(1000):
+            if f"condition_{i}" not in batch:
+                break
+            conditions.append(batch[f"condition_{i}"])
+            position_deltas.append(batch.get(f"position_delta_{i}"))
+            position_scales.append(batch.get(f"position_scale_{i}", [1.0])[0])
 
         # Prepare inputs
         with torch.no_grad():
@@ -258,17 +265,27 @@ class OminiModel(BaseModel):
             x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.dtype)
 
             # Prepare conditions
-            condition_latents, condition_ids = encode_images(self.flux_pipe, conditions)
-
-            # Add position delta
-            condition_ids[:, 1] += position_delta[0]
-            condition_ids[:, 2] += position_delta[1]
-
-            if position_scale != 1.0:
-                print("Position scale:", position_scale)
-                scale_bias = (position_scale - 1.0) / 2
-                condition_ids[:, 1:] *= position_scale
-                condition_ids[:, 1:] += scale_bias
+            condition_latents, condition_ids = [], []
+            for cond, p_delta, p_scale in zip(
+                conditions,
+                position_deltas,
+                position_scales,
+            ):
+                # Prepare conditions
+                c_latents, c_ids = encode_images(self.flux_pipe, cond)
+                # Scale the position (see OminiConrtol2)
+                if p_scale != 1.0:
+                    scale_bias = (p_scale - 1.0) / 2
+                    c_ids[:, 1:] *= p_scale
+                    c_ids[:, 1:] += scale_bias
+                # Add position delta (see OminiControl)
+                c_ids[:, 1] += p_delta[0][0]
+                c_ids[:, 2] += p_delta[0][1]
+                if len(p_delta) > 1:
+                    print("Warning: only the first position delta is used.")
+                # Append to the list
+                condition_latents.append(c_latents)
+                condition_ids.append(c_ids)
 
             # Prepare guidance
             guidance = (
@@ -277,21 +294,20 @@ class OminiModel(BaseModel):
                 else None
             )
 
-        group_mask = None
+        branch_n = 2 + len(conditions)
+        group_mask = torch.ones([branch_n, branch_n], dtype=torch.bool).to(self.device)
+        # Disable the attention cross different condition branches
+        group_mask[2:, 2:] = torch.diag(torch.tensor([1] * len(conditions)))
+        # Disable the attention from condition branches to image branch and text branch
         if self.model_config.get("independent_condition", False):
-            # Group sequence: text, image, and condition
-            group_mask = [
-                [True, True, True],
-                [True, True, True],
-                [False, False, True],
-            ]
+            group_mask[2:, :2] = False
 
         # Forward pass
         transformer_out = transformer_forward(
             self.transformer,
-            image_features=[x_t, condition_latents],
+            image_features=[x_t, *(condition_latents)],
             text_features=[prompt_embeds],
-            img_ids=[img_ids, condition_ids],
+            img_ids=[img_ids, *(condition_ids)],
             txt_ids=[text_ids],
             # There are three timesteps for the three branches
             # (text, image, and the condition)
@@ -318,7 +334,7 @@ class OminiModel(BaseModel):
         return step_loss
 
     @torch.no_grad()
-    def generate_a_sample(self, save_path, file_name, condition_type):
+    def generate_a_sample(self, save_path, file_name):
         # TODO: change this two variables to parameters
         condition_size = self.training_config["dataset"]["condition_size"]
         target_size = self.training_config["dataset"]["target_size"]
@@ -330,7 +346,7 @@ class OminiModel(BaseModel):
         generator.manual_seed(42)
 
         adapter = self.adapter_names[0]
-
+        condition_type = self.training_config["condition_type"]
         test_list = []
 
         if condition_type == "subject":

@@ -185,7 +185,7 @@ def attn_forward(
         keys_, values_ = [], []
         # Add keys and values from other branches
         for j, (k, v) in enumerate(zip(keys, values)):
-            if group_mask and not group_mask[i][j]:
+            if (group_mask is not None) and not (group_mask[i][j].item()):
                 continue
             keys_.append(k)
             values_.append(v)
