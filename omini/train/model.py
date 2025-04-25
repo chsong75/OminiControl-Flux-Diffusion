@@ -10,6 +10,9 @@ from typing import List
 
 import prodigyopt
 
+from ..pipeline.tools import encode_images, prepare_text_input
+from ..pipeline.flux_omini import transformer_forward
+
 
 def get_rank():
     try:
@@ -134,7 +137,102 @@ class BaseModel(L.LightningModule):
         return optimizer
 
     def training_step(self, batch, batch_idx):
-        raise NotImplementedError("Training step not implemented.")
+        imgs = batch["image"]
+        prompts = batch["description"]
+
+        # Get the conditions and position deltas from the batch
+        conditions, position_deltas, position_scales = [], [], []
+        for i in range(1000):
+            if f"condition_{i}" not in batch:
+                break
+            conditions.append(batch[f"condition_{i}"])
+            position_deltas.append(batch.get(f"position_delta_{i}"))
+            position_scales.append(batch.get(f"position_scale_{i}", [1.0])[0])
+
+        # Prepare inputs
+        with torch.no_grad():
+            # Prepare image input
+            x_0, img_ids = encode_images(self.flux_pipe, imgs)
+
+            # Prepare text input
+            prompt_embeds, pooled_prompt_embeds, text_ids = prepare_text_input(
+                self.flux_pipe, prompts
+            )
+
+            # Prepare t and x_t
+            t = torch.sigmoid(torch.randn((imgs.shape[0],), device=self.device))
+            x_1 = torch.randn_like(x_0).to(self.device)
+            t_ = t.unsqueeze(1).unsqueeze(1)
+            x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.dtype)
+
+            # Prepare conditions
+            condition_latents, condition_ids = [], []
+            for cond, p_delta, p_scale in zip(
+                conditions,
+                position_deltas,
+                position_scales,
+            ):
+                # Prepare conditions
+                c_latents, c_ids = encode_images(self.flux_pipe, cond)
+                # Scale the position (see OminiConrtol2)
+                if p_scale != 1.0:
+                    scale_bias = (p_scale - 1.0) / 2
+                    c_ids[:, 1:] *= p_scale
+                    c_ids[:, 1:] += scale_bias
+                # Add position delta (see OminiControl)
+                c_ids[:, 1] += p_delta[0][0]
+                c_ids[:, 2] += p_delta[0][1]
+                if len(p_delta) > 1:
+                    print("Warning: only the first position delta is used.")
+                # Append to the list
+                condition_latents.append(c_latents)
+                condition_ids.append(c_ids)
+
+            # Prepare guidance
+            guidance = (
+                torch.ones_like(t).to(self.device)
+                if self.transformer.config.guidance_embeds
+                else None
+            )
+
+        branch_n = 2 + len(conditions)
+        group_mask = torch.ones([branch_n, branch_n], dtype=torch.bool).to(self.device)
+        # Disable the attention cross different condition branches
+        group_mask[2:, 2:] = torch.diag(torch.tensor([1] * len(conditions)))
+        # Disable the attention from condition branches to image branch and text branch
+        if self.model_config.get("independent_condition", False):
+            group_mask[2:, :2] = False
+
+        # Forward pass
+        transformer_out = transformer_forward(
+            self.transformer,
+            image_features=[x_t, *(condition_latents)],
+            text_features=[prompt_embeds],
+            img_ids=[img_ids, *(condition_ids)],
+            txt_ids=[text_ids],
+            # There are three timesteps for the three branches
+            # (text, image, and the condition)
+            timesteps=[t, t, torch.zeros_like(t)],
+            # Same as above
+            pooled_projections=[*[pooled_prompt_embeds] * 3],
+            guidances=[guidance, guidance, guidance],
+            # The LoRA adapter names of each branch
+            adapters=[None, None, "default"],
+            return_dict=False,
+            group_mask=group_mask,
+        )
+        pred = transformer_out[0]
+
+        # Compute loss
+        step_loss = torch.nn.functional.mse_loss(pred, (x_1 - x_0), reduction="mean")
+        self.last_t = t.mean().item()
+
+        self.log_loss = (
+            step_loss.item()
+            if not hasattr(self, "log_loss")
+            else self.log_loss * 0.95 + step_loss.item() * 0.05
+        )
+        return step_loss
 
     def generate_a_sample(self):
         raise NotImplementedError("Generate a sample not implemented.")
