@@ -28,9 +28,9 @@ class OminiModel(L.LightningModule):
         self.optimizer_config = optimizer_config
 
         # Load the Flux pipeline
-        self.flux_pipe: FluxPipeline = (
-            FluxPipeline.from_pretrained(flux_pipe_id).to(dtype=dtype).to(device)
-        )
+        self.flux_pipe: FluxPipeline = FluxPipeline.from_pretrained(
+            flux_pipe_id, dtype=dtype
+        ).to(device)
         self.transformer = self.flux_pipe.transformer
         self.transformer.gradient_checkpointing = gradient_checkpointing
         self.transformer.train()
