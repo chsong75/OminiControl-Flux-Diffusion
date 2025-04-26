@@ -40,7 +40,7 @@ class ImageMultiConditionDataset(ImageConditionDataset):
             description = ""
         if drop_image:
             condition_imgs = [
-                Image.new("RGB", (condition_size, condition_size))
+                Image.new("RGB", condition_size)
                 for _ in range(len(self.condition_type))
             ]
 
@@ -50,12 +50,10 @@ class ImageMultiConditionDataset(ImageConditionDataset):
             **({"pil_image": [image, condition_img]} if self.return_pil_image else {}),
         }
 
-        for i, (condition_img, position_delta) in enumerate(
-            zip(condition_imgs, position_deltas)
-        ):
-            return_dict[f"condition_{i}"] = self.to_tensor(condition_img)
+        for i, c_type in enumerate(self.condition_type):
+            return_dict[f"condition_{i}"] = self.to_tensor(condition_imgs[i])
             return_dict[f"condition_type_{i}"] = self.condition_type[i]
-            return_dict[f"position_delta_{i}"] = position_delta
+            return_dict[f"position_delta_{i}"] = position_deltas[i]
             return_dict[f"position_scale_{i}"] = position_scale
 
         return return_dict
@@ -80,12 +78,10 @@ class OminiModel(BaseModel):
         for i, c_type in enumerate(condition_type):
             if c_type in ["canny", "coloring", "deblurring", "depth"]:
                 image = Image.open("assets/vase_hq.jpg")
-                image = image.resize((condition_size, condition_size))
+                image = image.resize(condition_size)
                 condition_img = convert_to_condition(c_type, image, 5)
             elif c_type == "fill":
-                condition_img = image.resize((condition_size, condition_size)).convert(
-                    "RGB"
-                )
+                condition_img = image.resize(condition_size).convert("RGB")
                 w, h = image.size
                 x1, x2 = sorted([random.randint(0, w), random.randint(0, w)])
                 y1, y2 = sorted([random.randint(0, h), random.randint(0, h)])

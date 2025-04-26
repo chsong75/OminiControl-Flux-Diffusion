@@ -20,8 +20,8 @@ class Subject200KDataset(Dataset):
     def __init__(
         self,
         base_dataset,
-        condition_size: int = 512,
-        target_size: int = 512,
+        condition_size=(512, 512),
+        target_size=(512, 512),
         image_size: int = 512,
         padding: int = 0,
         condition_type: str = "subject",
@@ -74,12 +74,8 @@ class Subject200KDataset(Dataset):
         )
 
         # Resize the image
-        condition_img = condition_img.resize(
-            (self.condition_size, self.condition_size)
-        ).convert("RGB")
-        target_image = target_image.resize(
-            (self.target_size, self.target_size)
-        ).convert("RGB")
+        condition_img = condition_img.resize(self.condition_size).convert("RGB")
+        target_image = target_image.resize(self.target_size).convert("RGB")
 
         # Get the description
         description = item["description"][
@@ -92,16 +88,14 @@ class Subject200KDataset(Dataset):
         if drop_text:
             description = ""
         if drop_image:
-            condition_img = Image.new(
-                "RGB", (self.condition_size, self.condition_size), (0, 0, 0)
-            )
+            condition_img = Image.new("RGB", self.condition_size, (0, 0, 0))
 
         return {
             "image": self.to_tensor(target_image),
             "condition_0": self.to_tensor(condition_img),
             "condition_type_0": self.condition_type,
             "position_delta_0": np.array(
-                [0, -self.condition_size // 16]
+                [0, -self.condition_size[0] // 16]
             ),  # 16 is the downscale factor of the image
             "description": description,
             **({"pil_image": image} if self.return_pil_image else {}),
@@ -112,8 +106,8 @@ class ImageConditionDataset(Dataset):
     def __init__(
         self,
         base_dataset,
-        condition_size: int = 512,
-        target_size: int = 512,
+        condition_size=(512, 512),
+        target_size=(512, 512),
         condition_type: str = "canny",
         drop_text_prob: float = 0.1,
         drop_image_prob: float = 0.1,
@@ -138,7 +132,7 @@ class ImageConditionDataset(Dataset):
         condition_size = self.condition_size
         position_delta = np.array([0, 0])
         if condition_type in ["canny", "coloring", "deblurring", "depth"]:
-            condition_img = image.resize((condition_size, condition_size))
+            condition_img = image.resize(condition_size)
             kwargs = {}
             if condition_type == "deblurring":
                 blur_radius = random.randint(1, 10)
@@ -146,12 +140,10 @@ class ImageConditionDataset(Dataset):
             condition_img = convert_to_condition(condition_type, image, **kwargs)
         elif condition_type == "depth_pred":
             depth_img = convert_to_condition("depth", image)
-            condition_img = image.resize((condition_size, condition_size))
-            image = depth_img.resize((condition_size, condition_size))
+            condition_img = image.resize(condition_size)
+            image = depth_img.resize(condition_size)
         elif condition_type == "fill":
-            condition_img = image.resize((condition_size, condition_size)).convert(
-                "RGB"
-            )
+            condition_img = image.resize(condition_size).convert("RGB")
             w, h = image.size
             x1, x2 = sorted([random.randint(0, w), random.randint(0, w)])
             y1, y2 = sorted([random.randint(0, h), random.randint(0, h)])
@@ -164,15 +156,15 @@ class ImageConditionDataset(Dataset):
                 image, Image.new("RGB", image.size, (0, 0, 0)), mask
             )
         elif condition_type == "sr":
-            condition_img = image.resize((condition_size, condition_size))
-            position_delta = np.array([0, -condition_size // 16])
+            condition_img = image.resize(condition_size)
+            position_delta = np.array([0, -condition_size[0] // 16])
         else:
             raise ValueError(f"Condition type {condition_type} is not  implemented.")
         return condition_img, position_delta
 
     def __getitem__(self, idx):
         image = self.base_dataset[idx]["jpg"]
-        image = image.resize((self.target_size, self.target_size)).convert("RGB")
+        image = image.resize(self.target_size).convert("RGB")
         description = self.base_dataset[idx]["json"]["prompt"]
 
         condition_size = self.condition_size
@@ -189,9 +181,7 @@ class ImageConditionDataset(Dataset):
         if drop_text:
             description = ""
         if drop_image:
-            condition_img = Image.new(
-                "RGB", (condition_size, condition_size), (0, 0, 0)
-            )
+            condition_img = Image.new("RGB", condition_size, (0, 0, 0))
 
         return {
             "image": self.to_tensor(image),
@@ -224,19 +214,19 @@ class OminiModel(BaseModel):
         if condition_type == "subject":
             # Test case1
             image = Image.open("assets/test_in.jpg")
-            image = image.resize((condition_size, condition_size))
+            image = image.resize(condition_size)
             prompt = "Resting on the picnic table at a lakeside campsite, it's caught in the golden glow of early morning, with mist rising from the water and tall pines casting long shadows behind the scene."
             condition = Condition(image, adapter, [0, -32], position_scale)
             test_list.append((condition, prompt))
             # Test case2
             image = Image.open("assets/test_out.jpg")
-            image = image.resize((condition_size, condition_size))
+            image = image.resize(condition_size)
             prompt = "In a bright room. It is placed on a table."
             condition = Condition(image, adapter, [0, -32], position_scale)
             test_list.append((condition, prompt))
         elif condition_type in ["canny", "coloring", "deblurring", "depth"]:
             image = Image.open("assets/vase_hq.jpg")
-            image = image.resize((condition_size, condition_size))
+            image = image.resize(condition_size)
             condition_img = convert_to_condition(condition_type, image, 5)
             condition = Condition(
                 condition_img, adapter, position_delta, position_scale
@@ -244,14 +234,12 @@ class OminiModel(BaseModel):
             test_list.append((condition, "A beautiful vase on a table."))
         elif condition_type == "depth_pred":
             image = Image.open("assets/vase_hq.jpg")
-            image = image.resize((condition_size, condition_size))
+            image = image.resize(condition_size)
             condition = Condition(image, adapter, position_delta, position_scale)
             test_list.append((condition, "A beautiful vase on a table."))
         elif condition_type == "fill":
             condition_img = (
-                Image.open("./assets/vase_hq.jpg")
-                .resize((condition_size, condition_size))
-                .convert("RGB")
+                Image.open("./assets/vase_hq.jpg").resize(condition_size).convert("RGB")
             )
             mask = Image.new("L", condition_img.size, 0)
             draw = ImageDraw.Draw(mask)
@@ -265,7 +253,7 @@ class OminiModel(BaseModel):
             test_list.append((condition, "A beautiful vase on a table."))
         elif condition_type == "super_resolution":
             image = Image.open("assets/vase_hq.jpg")
-            image = image.resize((condition_size, condition_size))
+            image = image.resize(condition_size)
             condition = Condition(image, adapter, position_delta, position_scale)
             test_list.append((condition, "A beautiful vase on a table."))
         else:
@@ -276,8 +264,8 @@ class OminiModel(BaseModel):
                 self.flux_pipe,
                 prompt=prompt,
                 conditions=[condition],
-                height=target_size,
-                width=target_size,
+                height=target_size[1],
+                width=target_size[0],
                 generator=generator,
                 model_config=self.model_config,
                 kv_cache=self.model_config.get("independent_condition", False),
