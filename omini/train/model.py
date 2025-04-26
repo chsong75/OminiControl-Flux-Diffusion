@@ -53,7 +53,7 @@ class BaseModel(L.LightningModule):
         device: str = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         model_config: dict = {},
-        adapter_names: List[str] = ["default"],
+        adapter_names: List[str] = [None, None, "default"],
         optimizer_config: dict = None,
         gradient_checkpointing: bool = False,
     ):
@@ -63,9 +63,9 @@ class BaseModel(L.LightningModule):
         self.optimizer_config = optimizer_config
 
         # Load the Flux pipeline
-        self.flux_pipe: FluxPipeline = (
-            FluxPipeline.from_pretrained(flux_pipe_id).to(dtype=dtype).to(device)
-        )
+        self.flux_pipe: FluxPipeline = FluxPipeline.from_pretrained(
+            flux_pipe_id, torch_dtype=dtype
+        ).to(device)
         self.transformer = self.flux_pipe.transformer
         self.transformer.gradient_checkpointing = gradient_checkpointing
         self.transformer.train()
@@ -75,21 +75,20 @@ class BaseModel(L.LightningModule):
         self.flux_pipe.text_encoder_2.requires_grad_(False).eval()
         self.flux_pipe.vae.requires_grad_(False).eval()
         self.adapter_names = adapter_names
+        self.adapter_set = set([each for each in adapter_names if each is not None])
 
         # Initialize LoRA layers
-        self.lora_layers = self.init_lora(lora_path, lora_config, adapter_names)
+        self.lora_layers = self.init_lora(lora_path, lora_config)
 
         self.to(device).to(dtype)
 
-    def init_lora(
-        self, lora_path: str, lora_config: dict, adapter_names: List[str] = ["default"]
-    ):
+    def init_lora(self, lora_path: str, lora_config: dict):
         assert lora_path or lora_config
         if lora_path:
             # TODO: Implement this
             raise NotImplementedError
         else:
-            for adapter_name in adapter_names:
+            for adapter_name in self.adapter_set:
                 self.transformer.add_adapter(
                     LoraConfig(**lora_config), adapter_name=adapter_name
                 )
@@ -99,8 +98,8 @@ class BaseModel(L.LightningModule):
             )
         return list(lora_layers)
 
-    def save_lora(self, path: str, adapter_names: List[str] = ["default"]):
-        for adapter_name in adapter_names:
+    def save_lora(self, path: str):
+        for adapter_name in self.adapter_set:
             FluxPipeline.save_lora_weights(
                 save_directory=path,
                 weight_name=f"{adapter_name}.safetensors",
@@ -212,12 +211,12 @@ class BaseModel(L.LightningModule):
             txt_ids=[text_ids],
             # There are three timesteps for the three branches
             # (text, image, and the condition)
-            timesteps=[t, t, torch.zeros_like(t)],
+            timesteps=[t, t] + [torch.zeros_like(t)] * len(conditions),
             # Same as above
-            pooled_projections=[*[pooled_prompt_embeds] * 3],
-            guidances=[guidance, guidance, guidance],
+            pooled_projections=[pooled_prompt_embeds] * branch_n,
+            guidances=[guidance] * branch_n,
             # The LoRA adapter names of each branch
-            adapters=[None, None, "default"],
+            adapters=self.adapter_names,
             return_dict=False,
             group_mask=group_mask,
         )

@@ -24,6 +24,8 @@ from PIL import Image, ImageFilter
 
 from .tools import clip_hidden_states, encode_images
 
+depth_pipe = None
+
 
 def convert_to_condition(
     condition_type: str,
@@ -538,6 +540,14 @@ def generate(
                     kesy.clear()
                     values.clear()
 
+    branch_n = len(conditions) + 2
+    group_mask = torch.ones([branch_n, branch_n], dtype=torch.bool)
+    # Disable the attention cross different condition branches
+    group_mask[2:, 2:] = torch.diag(torch.tensor([1] * len(conditions)))
+    # Disable the attention from condition branches to image branch and text branch
+    if kv_cache:
+        group_mask[2:, :2] = False
+
     # Denoising loop
     with self.progress_bar(total=num_inference_steps) as progress_bar:
         for i, t in enumerate(timesteps):
@@ -572,6 +582,7 @@ def generate(
                 cache_mode=mode if kv_cache else None,
                 cache_storage=kv_cond if kv_cache else None,
                 to_cache=[False, False, *[True] * len(c_latents)],
+                group_mask=group_mask,
                 **transformer_kwargs,
             )[0]
 

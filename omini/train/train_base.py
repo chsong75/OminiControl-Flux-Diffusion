@@ -134,28 +134,21 @@ class ImageConditionDataset(Dataset):
     def __len__(self):
         return len(self.base_dataset)
 
-    def __getitem__(self, idx):
-        image = self.base_dataset[idx]["jpg"]
-        image = image.resize((self.target_size, self.target_size)).convert("RGB")
-        description = self.base_dataset[idx]["json"]["prompt"]
-
+    def __get_condition__(self, image, condition_type):
         condition_size = self.condition_size
-        position_scale = self.position_scale
-
-        # Get the condition image
         position_delta = np.array([0, 0])
-        if self.condition_type in ["canny", "coloring", "deblurring", "depth"]:
+        if condition_type in ["canny", "coloring", "deblurring", "depth"]:
             condition_img = image.resize((condition_size, condition_size))
             kwargs = {}
-            if self.condition_type == "deblurring":
+            if condition_type == "deblurring":
                 blur_radius = random.randint(1, 10)
                 kwargs["blur_radius"] = blur_radius
-            condition_img = convert_to_condition(self.condition_type, image, **kwargs)
-        elif self.condition_type == "depth_pred":
+            condition_img = convert_to_condition(condition_type, image, **kwargs)
+        elif condition_type == "depth_pred":
             depth_img = convert_to_condition("depth", image)
             condition_img = image.resize((condition_size, condition_size))
             image = depth_img.resize((condition_size, condition_size))
-        elif self.condition_type == "fill":
+        elif condition_type == "fill":
             condition_img = image.resize((condition_size, condition_size)).convert(
                 "RGB"
             )
@@ -170,16 +163,24 @@ class ImageConditionDataset(Dataset):
             condition_img = Image.composite(
                 image, Image.new("RGB", image.size, (0, 0, 0)), mask
             )
-        elif self.condition_type == "sr":
+        elif condition_type == "sr":
             condition_img = image.resize((condition_size, condition_size))
             position_delta = np.array([0, -condition_size // 16])
         else:
-            raise ValueError(
-                f"Condition type {self.condition_type} is not  implemented."
-            )
+            raise ValueError(f"Condition type {condition_type} is not  implemented.")
+        return condition_img, position_delta
 
-        condition_img = condition_img.convert("RGB")
-        image = image.convert("RGB")
+    def __getitem__(self, idx):
+        image = self.base_dataset[idx]["jpg"]
+        image = image.resize((self.target_size, self.target_size)).convert("RGB")
+        description = self.base_dataset[idx]["json"]["prompt"]
+
+        condition_size = self.condition_size
+        position_scale = self.position_scale
+
+        condition_img, position_delta = self.__get_condition__(
+            image, self.condition_type
+        )
 
         # Randomly drop text or image (for training)
         drop_text = random.random() < self.drop_text_prob
@@ -199,7 +200,7 @@ class ImageConditionDataset(Dataset):
             "position_delta_0": position_delta,
             "description": description,
             **({"pil_image": [image, condition_img]} if self.return_pil_image else {}),
-            **({"position_scale": position_scale} if position_scale != 1.0 else {}),
+            **({"position_scale_0": position_scale} if position_scale != 1.0 else {}),
         }
 
 
@@ -216,7 +217,7 @@ class OminiModel(BaseModel):
         generator = torch.Generator(device=self.device)
         generator.manual_seed(42)
 
-        adapter = self.adapter_names[0]
+        adapter = self.adapter_names[2]
         condition_type = self.training_config["condition_type"]
         test_list = []
 
@@ -279,7 +280,7 @@ class OminiModel(BaseModel):
                 width=target_size,
                 generator=generator,
                 model_config=self.model_config,
-                kv_cache=self.training_config.get("independent_condition", False),
+                kv_cache=self.model_config.get("independent_condition", False),
             )
             file_path = os.path.join(save_path, f"{file_name}_{condition_type}_{i}.jpg")
             res.images[0].save(file_path)
