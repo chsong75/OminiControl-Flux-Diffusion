@@ -29,7 +29,7 @@ class OminiModel(L.LightningModule):
 
         # Load the Flux pipeline
         self.flux_pipe: FluxPipeline = FluxPipeline.from_pretrained(
-            flux_pipe_id, dtype=dtype
+            flux_pipe_id, torch_dtype=dtype
         ).to(device)
         self.transformer = self.flux_pipe.transformer
         self.transformer.gradient_checkpointing = gradient_checkpointing
