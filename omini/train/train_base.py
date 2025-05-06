@@ -132,8 +132,7 @@ class ImageConditionDataset(Dataset):
         condition_size = self.condition_size
         position_delta = np.array([0, 0])
         if condition_type in ["canny", "coloring", "deblurring", "depth"]:
-            condition_img = image.resize(condition_size)
-            kwargs = {}
+            image, kwargs = image.resize(condition_size), {}
             if condition_type == "deblurring":
                 blur_radius = random.randint(1, 10)
                 kwargs["blur_radius"] = blur_radius

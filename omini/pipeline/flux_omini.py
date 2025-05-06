@@ -75,7 +75,7 @@ class Condition(object):
         self.adapter = adapter_setting
         self.position_delta = position_delta
         self.position_scale = position_scale
-        self.latent_mask = latent_mask.T.reshape(-1)
+        self.latent_mask = latent_mask.T.reshape(-1) if latent_mask else None
         self.is_complement = is_complement
 
     def encode(
