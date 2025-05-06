@@ -136,17 +136,18 @@ class BaseModel(L.LightningModule):
         return optimizer
 
     def training_step(self, batch, batch_idx):
-        imgs = batch["image"]
-        prompts = batch["description"]
+        imgs, prompts = batch["image"], batch["description"]
+        image_latent_mask = batch.get("image_latent_mask", None)
 
         # Get the conditions and position deltas from the batch
-        conditions, position_deltas, position_scales = [], [], []
+        conditions, position_deltas, position_scales, latent_masks = [], [], [], []
         for i in range(1000):
             if f"condition_{i}" not in batch:
                 break
             conditions.append(batch[f"condition_{i}"])
-            position_deltas.append(batch.get(f"position_delta_{i}"))
+            position_deltas.append(batch.get(f"position_delta_{i}", [[0, 0]]))
             position_scales.append(batch.get(f"position_scale_{i}", [1.0])[0])
+            latent_masks.append(batch.get(f"condition_latent_mask_{i}", None))
 
         # Prepare inputs
         with torch.no_grad():
@@ -163,13 +164,16 @@ class BaseModel(L.LightningModule):
             x_1 = torch.randn_like(x_0).to(self.device)
             t_ = t.unsqueeze(1).unsqueeze(1)
             x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.dtype)
+            if image_latent_mask is not None:
+                x_0 = x_0[:, image_latent_mask[0]]
+                x_1 = x_1[:, image_latent_mask[0]]
+                x_t = x_t[:, image_latent_mask[0]]
+                img_ids = img_ids[image_latent_mask[0]]
 
             # Prepare conditions
             condition_latents, condition_ids = [], []
-            for cond, p_delta, p_scale in zip(
-                conditions,
-                position_deltas,
-                position_scales,
+            for cond, p_delta, p_scale, latent_mask in zip(
+                conditions, position_deltas, position_scales, latent_masks
             ):
                 # Prepare conditions
                 c_latents, c_ids = encode_images(self.flux_pipe, cond)
@@ -184,6 +188,8 @@ class BaseModel(L.LightningModule):
                 if len(p_delta) > 1:
                     print("Warning: only the first position delta is used.")
                 # Append to the list
+                if latent_mask is not None:
+                    c_latents, c_ids = c_latents[latent_mask], c_ids[latent_mask[0]]
                 condition_latents.append(c_latents)
                 condition_ids.append(c_ids)
 

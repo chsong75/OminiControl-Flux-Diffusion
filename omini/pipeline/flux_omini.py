@@ -68,11 +68,15 @@ class Condition(object):
         adapter_setting: Union[str, dict],
         position_delta=None,
         position_scale=1.0,
+        latent_mask=None,
+        is_complement=False,
     ) -> None:
         self.condition = condition
         self.adapter = adapter_setting
         self.position_delta = position_delta
         self.position_scale = position_scale
+        self.latent_mask = latent_mask.T.reshape(-1)
+        self.is_complement = is_complement
 
     def encode(
         self, pipe: FluxPipeline, empty: bool = False
@@ -88,6 +92,10 @@ class Condition(object):
             scale_bias = (self.position_scale - 1.0) / 2
             ids[:, 1:] *= self.position_scale
             ids[:, 1:] += scale_bias
+
+        if self.latent_mask is not None:
+            tokens = tokens[:, self.latent_mask]
+            ids = ids[self.latent_mask]
 
         return tokens, ids
 
@@ -433,6 +441,7 @@ def generate(
     image_guidance_scale: float = 1.0,
     transformer_kwargs: Optional[Dict[str, Any]] = {},
     kv_cache=False,
+    latent_mask=None,
     **params: dict,
 ):
     self = pipeline
@@ -493,19 +502,30 @@ def generate(
         latents,
     )
 
+    if latent_mask is not None:
+        latent_mask = latent_mask.T.reshape(-1)
+        latents = latents[:, latent_mask]
+        latent_image_ids = latent_image_ids[latent_mask]
+
     # Prepare conditions
     c_latents, uc_latents, c_ids, c_timesteps = ([], [], [], [])
     c_projections, c_guidances, c_adapters = ([], [], [])
+    complement_cond = None
     for condition in conditions:
         tokens, ids = condition.encode(self)
         c_latents.append(tokens)  # [batch_size, token_n, token_dim]
         # Empty condition for unconditioned image
-        uc_latents.append(condition.encode(self, empty=True)[0])
+        if image_guidance_scale != 1.0:
+            uc_latents.append(condition.encode(self, empty=True)[0])
         c_ids.append(ids)  # [token_n, id_dim(3)]
         c_timesteps.append(torch.zeros([1], device=device))
         c_projections.append(pooled_prompt_embeds)
         c_guidances.append(torch.ones([1], device=device))
         c_adapters.append(condition.adapter)
+        # This complement_condition will be combined with the original image.
+        # See the token integration of OminiControl2 [https://arxiv.org/abs/2503.08280]
+        if condition.is_complement:
+            complement_cond = (tokens, ids)
 
     # Prepare timesteps
     sigmas = np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)
@@ -630,6 +650,28 @@ def generate(
                 (i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0
             ):
                 progress_bar.update()
+
+    if latent_mask is not None:
+        # Combine the generated latents and the complement condition
+        assert complement_cond is not None
+        comp_latent, comp_ids = complement_cond
+        all_ids = torch.cat([latent_image_ids, comp_ids], dim=0)  # (Ta+Tc,3)
+        shape = (all_ids.max(dim=0).values + 1).to(torch.long)  # (3,)
+        H, W = shape[1].item(), shape[2].item()
+        B, _, C = latents.shape
+        # Create a empty canvas
+        canvas = latents.new_zeros(B, H * W, C)  # (B,H*W,C)
+
+        # Stash the latents and the complement condition
+        def _stash(canvas, tokens, ids, H, W) -> None:
+            B, T, C = tokens.shape
+            ids = ids.to(torch.long)
+            flat_idx = (ids[:, 1] * W + ids[:, 2]).to(torch.long)
+            canvas.view(B, -1, C).index_copy_(1, flat_idx, tokens)
+
+        _stash(canvas, latents, latent_image_ids, H, W)
+        _stash(canvas, comp_latent, comp_ids, H, W)
+        latents = canvas.view(B, H * W, C)
 
     if output_type == "latent":
         image = latents
