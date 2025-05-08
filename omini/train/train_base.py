@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 
 from datasets import load_dataset
 
-from .model import BaseModel, TrainingCallback, get_rank, get_config, init_wandb
+from .training_model import BaseModel, TrainingCallback, get_rank, get_config, init_wandb
 from ..pipeline.flux_omini import Condition, convert_to_condition, generate
 
 
