@@ -22,7 +22,47 @@ import cv2
 
 from PIL import Image, ImageFilter
 
-from .tools import clip_hidden_states, encode_images
+
+def seed_everything(seed: int = 42):
+    torch.backends.cudnn.deterministic = True
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+
+def clip_hidden_states(hidden_states: torch.FloatTensor) -> torch.FloatTensor:
+    if hidden_states.dtype == torch.float16:
+        hidden_states = hidden_states.clip(-65504, 65504)
+    return hidden_states
+
+
+def encode_images(pipeline: FluxPipeline, images: torch.Tensor):
+    """
+    Encodes the images into tokens and ids for FLUX pipeline.
+    """
+    images = pipeline.image_processor.preprocess(images)
+    images = images.to(pipeline.device).to(pipeline.dtype)
+    images = pipeline.vae.encode(images).latent_dist.sample()
+    images = (
+        images - pipeline.vae.config.shift_factor
+    ) * pipeline.vae.config.scaling_factor
+    images_tokens = pipeline._pack_latents(images, *images.shape)
+    images_ids = pipeline._prepare_latent_image_ids(
+        images.shape[0],
+        images.shape[2],
+        images.shape[3],
+        pipeline.device,
+        pipeline.dtype,
+    )
+    if images_tokens.shape[1] != images_ids.shape[0]:
+        images_ids = pipeline._prepare_latent_image_ids(
+            images.shape[0],
+            images.shape[2] // 2,
+            images.shape[3] // 2,
+            pipeline.device,
+            pipeline.dtype,
+        )
+    return images_tokens, images_ids
+
 
 depth_pipe = None
 

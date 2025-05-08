@@ -10,8 +10,7 @@ from typing import List
 
 import prodigyopt
 
-from ..pipeline.tools import encode_images, prepare_text_input
-from ..pipeline.flux_omini import transformer_forward
+from ..pipeline.flux_omini import transformer_forward, encode_images
 
 
 def get_rank():
@@ -155,8 +154,19 @@ class BaseModel(L.LightningModule):
             x_0, img_ids = encode_images(self.flux_pipe, imgs)
 
             # Prepare text input
-            prompt_embeds, pooled_prompt_embeds, text_ids = prepare_text_input(
-                self.flux_pipe, prompts
+            (
+                prompt_embeds,
+                pooled_prompt_embeds,
+                text_ids,
+            ) = self.flux_pipe.encode_prompt(
+                prompt=prompts,
+                prompt_2=None,
+                prompt_embeds=None,
+                pooled_prompt_embeds=None,
+                device=self.flux_pipe.device,
+                num_images_per_prompt=1,
+                max_sequence_length=self.model_config.get("max_sequence_length", 512),
+                lora_scale=None,
             )
 
             # Prepare t and x_t
