@@ -10,9 +10,9 @@ from PIL import Image, ImageDraw
 
 from datasets import load_dataset
 
-from .training_model import BaseModel, TrainingCallback, get_rank, get_config, init_wandb
+from .trainer import BaseModel, get_config, train
 from ..pipeline.flux_omini import Condition, generate
-from .train_base import ImageConditionDataset
+from .train_single import ImageConditionDataset
 
 
 class TokenIntergrationDataset(ImageConditionDataset):
@@ -100,50 +100,25 @@ class OminiModel(BaseModel):
 
 def main():
     # Initialize
-    is_main_process, rank = get_rank() == 0, get_rank()
-    torch.cuda.set_device(rank)
     config = get_config()
-
     training_config = config["train"]
-    run_name = time.strftime("%Y%m%d-%H%M%S")
 
-    # Initialize WanDB
-    wandb_config = training_config.get("wandb", None)
-    if wandb_config is not None and is_main_process:
-        init_wandb(wandb_config, run_name)
-
-    print("Rank:", rank)
-    if is_main_process:
-        print("Config:", config)
-
-    # Initialize dataset and dataloader
-    if training_config["dataset"]["type"] == "img":
-        # Load dataset text-to-image-2M
-        dataset = load_dataset(
-            "webdataset",
-            data_files={"train": training_config["dataset"]["urls"]},
-            split="train",
-            cache_dir="cache/t2i2m",
-            num_proc=32,
-        )
-        dataset = TokenIntergrationDataset(
-            dataset,
-            condition_size=training_config["dataset"]["condition_size"],
-            target_size=training_config["dataset"]["target_size"],
-            condition_type=training_config["condition_type"],
-            drop_text_prob=training_config["dataset"]["drop_text_prob"],
-            drop_image_prob=training_config["dataset"]["drop_image_prob"],
-            position_scale=training_config["dataset"].get("position_scale", 1.0),
-        )
-    else:
-        raise NotImplementedError
-
-    print("Dataset length:", len(dataset))
-    train_loader = DataLoader(
+    # Load dataset text-to-image-2M
+    dataset = load_dataset(
+        "webdataset",
+        data_files={"train": training_config["dataset"]["urls"]},
+        split="train",
+        cache_dir="cache/t2i2m",
+        num_proc=32,
+    )
+    dataset = TokenIntergrationDataset(
         dataset,
-        batch_size=training_config["batch_size"],
-        shuffle=True,
-        num_workers=training_config["dataloader_workers"],
+        condition_size=training_config["dataset"]["condition_size"],
+        target_size=training_config["dataset"]["target_size"],
+        condition_type=training_config["condition_type"],
+        drop_text_prob=training_config["dataset"]["drop_text_prob"],
+        drop_image_prob=training_config["dataset"]["drop_image_prob"],
+        position_scale=training_config["dataset"].get("position_scale", 1.0),
     )
 
     # Initialize model
@@ -158,34 +133,7 @@ def main():
         adapter_names=[None, None, "default"],
     )
 
-    # Callbacks for testing and saving checkpoints
-    if is_main_process:
-        training_callbacks = [TrainingCallback(run_name, training_config)]
-
-    # Initialize trainer
-    trainer = L.Trainer(
-        accumulate_grad_batches=training_config["accumulate_grad_batches"],
-        callbacks=training_callbacks if is_main_process else [],
-        enable_checkpointing=False,
-        enable_progress_bar=False,
-        logger=False,
-        max_steps=training_config.get("max_steps", -1),
-        max_epochs=training_config.get("max_epochs", -1),
-        gradient_clip_val=training_config.get("gradient_clip_val", 0.5),
-    )
-
-    setattr(trainer, "training_config", training_config)
-    setattr(trainable_model, "training_config", training_config)
-
-    # Save the training config
-    save_path = training_config.get("save_path", "./output")
-    if is_main_process:
-        os.makedirs(f"{save_path}/{run_name}")
-        with open(f"{save_path}/{run_name}/config.yaml", "w") as f:
-            yaml.dump(config, f)
-
-    # Start training
-    trainer.fit(trainable_model, train_loader)
+    train(dataset, trainable_model, config)
 
 
 if __name__ == "__main__":

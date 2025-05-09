@@ -45,7 +45,7 @@ def init_wandb(wandb_config, run_name):
         print("Failed to initialize WanDB:", e)
 
 
-class BaseModel(L.LightningModule):
+class OminiModel(L.LightningModule):
     def __init__(
         self,
         flux_pipe_id: str,
@@ -314,18 +314,20 @@ class TrainingCallback(L.Callback):
             )
 
         # Generate and save a sample image at specified intervals
-        if self.total_steps % self.sample_interval == 0:
+        if self.total_steps % self.sample_interval == 0 and self.test_function:
             print(
                 f"Epoch: {trainer.current_epoch}, Steps: {self.total_steps} - Generating a sample"
             )
             pl_module.eval()
-            pl_module.generate_a_sample(
-                f"{self.save_path}/{self.run_name}/output", f"lora_{self.total_steps}"
+            self.test_function(
+                pl_module,
+                f"{self.save_path}/{self.run_name}/output",
+                f"lora_{self.total_steps}",
             )
             pl_module.train()
 
 
-def train(dataset, trainable_model, config):
+def train(dataset, trainable_model, config, test_function):
     # Initialize
     is_main_process, rank = get_rank() == 0, get_rank()
     torch.cuda.set_device(rank)
@@ -354,12 +356,12 @@ def train(dataset, trainable_model, config):
 
     # Callbacks for testing and saving checkpoints
     if is_main_process:
-        training_callbacks = [TrainingCallback(run_name, training_config)]
+        callbacks = [TrainingCallback(run_name, training_config, test_function)]
 
     # Initialize trainer
     trainer = L.Trainer(
         accumulate_grad_batches=training_config["accumulate_grad_batches"],
-        callbacks=training_callbacks if is_main_process else [],
+        callbacks=callbacks if is_main_process else [],
         enable_checkpointing=False,
         enable_progress_bar=False,
         logger=False,

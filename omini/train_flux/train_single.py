@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 
 from datasets import load_dataset
 
-from .training_model import BaseModel, TrainingCallback, get_rank, get_config, init_wandb
+from .trainer import OminiModel, get_config, train
 from ..pipeline.flux_omini import Condition, convert_to_condition, generate
 
 
@@ -193,103 +193,86 @@ class ImageConditionDataset(Dataset):
         }
 
 
-class OminiModel(BaseModel):
-    @torch.no_grad()
-    def generate_a_sample(self, save_path, file_name):
-        # TODO: change this two variables to parameters
-        condition_size = self.training_config["dataset"]["condition_size"]
-        target_size = self.training_config["dataset"]["target_size"]
+@torch.no_grad()
+def test_function(model, save_path, file_name):
+    condition_size = model.training_config["dataset"]["condition_size"]
+    target_size = model.training_config["dataset"]["target_size"]
 
-        position_delta = self.training_config["dataset"].get("position_delta", [0, 0])
-        position_scale = self.training_config["dataset"].get("position_scale", 1.0)
+    position_delta = model.training_config["dataset"].get("position_delta", [0, 0])
+    position_scale = model.training_config["dataset"].get("position_scale", 1.0)
 
-        generator = torch.Generator(device=self.device)
-        generator.manual_seed(42)
+    generator = torch.Generator(device=model.device)
+    generator.manual_seed(42)
 
-        adapter = self.adapter_names[2]
-        condition_type = self.training_config["condition_type"]
-        test_list = []
+    adapter = model.adapter_names[2]
+    condition_type = model.training_config["condition_type"]
+    test_list = []
 
-        if condition_type == "subject":
-            # Test case1
-            image = Image.open("assets/test_in.jpg")
-            image = image.resize(condition_size)
-            prompt = "Resting on the picnic table at a lakeside campsite, it's caught in the golden glow of early morning, with mist rising from the water and tall pines casting long shadows behind the scene."
-            condition = Condition(image, adapter, [0, -32], position_scale)
-            test_list.append((condition, prompt))
-            # Test case2
-            image = Image.open("assets/test_out.jpg")
-            image = image.resize(condition_size)
-            prompt = "In a bright room. It is placed on a table."
-            condition = Condition(image, adapter, [0, -32], position_scale)
-            test_list.append((condition, prompt))
-        elif condition_type in ["canny", "coloring", "deblurring", "depth"]:
-            image = Image.open("assets/vase_hq.jpg")
-            image = image.resize(condition_size)
-            condition_img = convert_to_condition(condition_type, image, 5)
-            condition = Condition(
-                condition_img, adapter, position_delta, position_scale
-            )
-            test_list.append((condition, "A beautiful vase on a table."))
-        elif condition_type == "depth_pred":
-            image = Image.open("assets/vase_hq.jpg")
-            image = image.resize(condition_size)
-            condition = Condition(image, adapter, position_delta, position_scale)
-            test_list.append((condition, "A beautiful vase on a table."))
-        elif condition_type == "fill":
-            condition_img = (
-                Image.open("./assets/vase_hq.jpg").resize(condition_size).convert("RGB")
-            )
-            mask = Image.new("L", condition_img.size, 0)
-            draw = ImageDraw.Draw(mask)
-            a = condition_img.size[0] // 4
-            b = a * 3
-            draw.rectangle([a, a, b, b], fill=255)
-            condition_img = Image.composite(
-                condition_img, Image.new("RGB", condition_img.size, (0, 0, 0)), mask
-            )
-            condition = Condition(condition, adapter, position_delta, position_scale)
-            test_list.append((condition, "A beautiful vase on a table."))
-        elif condition_type == "super_resolution":
-            image = Image.open("assets/vase_hq.jpg")
-            image = image.resize(condition_size)
-            condition = Condition(image, adapter, position_delta, position_scale)
-            test_list.append((condition, "A beautiful vase on a table."))
-        else:
-            raise NotImplementedError
-        os.makedirs(save_path, exist_ok=True)
-        for i, (condition, prompt) in enumerate(test_list):
-            res = generate(
-                self.flux_pipe,
-                prompt=prompt,
-                conditions=[condition],
-                height=target_size[1],
-                width=target_size[0],
-                generator=generator,
-                model_config=self.model_config,
-                kv_cache=self.model_config.get("independent_condition", False),
-            )
-            file_path = os.path.join(save_path, f"{file_name}_{condition_type}_{i}.jpg")
-            res.images[0].save(file_path)
+    if condition_type == "subject":
+        # Test case1
+        image = Image.open("assets/test_in.jpg")
+        image = image.resize(condition_size)
+        prompt = "Resting on the picnic table at a lakeside campsite, it's caught in the golden glow of early morning, with mist rising from the water and tall pines casting long shadows behind the scene."
+        condition = Condition(image, adapter, [0, -32], position_scale)
+        test_list.append((condition, prompt))
+        # Test case2
+        image = Image.open("assets/test_out.jpg")
+        image = image.resize(condition_size)
+        prompt = "In a bright room. It is placed on a table."
+        condition = Condition(image, adapter, [0, -32], position_scale)
+        test_list.append((condition, prompt))
+    elif condition_type in ["canny", "coloring", "deblurring", "depth"]:
+        image = Image.open("assets/vase_hq.jpg")
+        image = image.resize(condition_size)
+        condition_img = convert_to_condition(condition_type, image, 5)
+        condition = Condition(condition_img, adapter, position_delta, position_scale)
+        test_list.append((condition, "A beautiful vase on a table."))
+    elif condition_type == "depth_pred":
+        image = Image.open("assets/vase_hq.jpg")
+        image = image.resize(condition_size)
+        condition = Condition(image, adapter, position_delta, position_scale)
+        test_list.append((condition, "A beautiful vase on a table."))
+    elif condition_type == "fill":
+        condition_img = (
+            Image.open("./assets/vase_hq.jpg").resize(condition_size).convert("RGB")
+        )
+        mask = Image.new("L", condition_img.size, 0)
+        draw = ImageDraw.Draw(mask)
+        a = condition_img.size[0] // 4
+        b = a * 3
+        draw.rectangle([a, a, b, b], fill=255)
+        condition_img = Image.composite(
+            condition_img, Image.new("RGB", condition_img.size, (0, 0, 0)), mask
+        )
+        condition = Condition(condition, adapter, position_delta, position_scale)
+        test_list.append((condition, "A beautiful vase on a table."))
+    elif condition_type == "super_resolution":
+        image = Image.open("assets/vase_hq.jpg")
+        image = image.resize(condition_size)
+        condition = Condition(image, adapter, position_delta, position_scale)
+        test_list.append((condition, "A beautiful vase on a table."))
+    else:
+        raise NotImplementedError
+    os.makedirs(save_path, exist_ok=True)
+    for i, (condition, prompt) in enumerate(test_list):
+        res = generate(
+            model.flux_pipe,
+            prompt=prompt,
+            conditions=[condition],
+            height=target_size[1],
+            width=target_size[0],
+            generator=generator,
+            model_config=model.model_config,
+            kv_cache=model.model_config.get("independent_condition", False),
+        )
+        file_path = os.path.join(save_path, f"{file_name}_{condition_type}_{i}.jpg")
+        res.images[0].save(file_path)
 
 
 def main():
     # Initialize
-    is_main_process, rank = get_rank() == 0, get_rank()
-    torch.cuda.set_device(rank)
     config = get_config()
-
     training_config = config["train"]
-    run_name = time.strftime("%Y%m%d-%H%M%S")
-
-    # Initialize WanDB
-    wandb_config = training_config.get("wandb", None)
-    if wandb_config is not None and is_main_process:
-        init_wandb(wandb_config, run_name)
-
-    print("Rank:", rank)
-    if is_main_process:
-        print("Config:", config)
 
     # Initialize dataset and dataloader
     if training_config["dataset"]["type"] == "subject":
@@ -343,14 +326,6 @@ def main():
     else:
         raise NotImplementedError
 
-    print("Dataset length:", len(dataset))
-    train_loader = DataLoader(
-        dataset,
-        batch_size=training_config["batch_size"],
-        shuffle=True,
-        num_workers=training_config["dataloader_workers"],
-    )
-
     # Initialize model
     trainable_model = OminiModel(
         flux_pipe_id=config["flux_path"],
@@ -362,34 +337,7 @@ def main():
         gradient_checkpointing=training_config.get("gradient_checkpointing", False),
     )
 
-    # Callbacks for testing and saving checkpoints
-    if is_main_process:
-        training_callbacks = [TrainingCallback(run_name, training_config)]
-
-    # Initialize trainer
-    trainer = L.Trainer(
-        accumulate_grad_batches=training_config["accumulate_grad_batches"],
-        callbacks=training_callbacks if is_main_process else [],
-        enable_checkpointing=False,
-        enable_progress_bar=False,
-        logger=False,
-        max_steps=training_config.get("max_steps", -1),
-        max_epochs=training_config.get("max_epochs", -1),
-        gradient_clip_val=training_config.get("gradient_clip_val", 0.5),
-    )
-
-    setattr(trainer, "training_config", training_config)
-    setattr(trainable_model, "training_config", training_config)
-
-    # Save the training config
-    save_path = training_config.get("save_path", "./output")
-    if is_main_process:
-        os.makedirs(f"{save_path}/{run_name}")
-        with open(f"{save_path}/{run_name}/config.yaml", "w") as f:
-            yaml.dump(config, f)
-
-    # Start training
-    trainer.fit(trainable_model, train_loader)
+    train(dataset, trainable_model, config, test_function)
 
 
 if __name__ == "__main__":
