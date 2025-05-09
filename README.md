@@ -4,11 +4,14 @@
 <img src='./assets/demo/demo_this_is_omini_control.jpg' width='100%' />
 <br>
 
-<a href="https://arxiv.org/abs/2411.15098"><img src="https://img.shields.io/badge/ariXv-2411.15098-A42C25.svg" alt="arXiv"></a>
 <a href="https://huggingface.co/Yuanshi/OminiControl"><img src="https://img.shields.io/badge/🤗_HuggingFace-Model-ffbd45.svg" alt="HuggingFace"></a>
-<a href="https://huggingface.co/spaces/Yuanshi/OminiControl"><img src="https://img.shields.io/badge/🤗_HuggingFace-Space-ffbd45.svg" alt="HuggingFace"></a>
+<a href="https://huggingface.co/spaces/Yuanshi/OminiControl"><img src="https://img.shields.io/badge/🤗_HuggingFace-Demo-ffbd45.svg" alt="HuggingFace"></a>
+<a href="https://huggingface.co/spaces/Yuanshi/OminiControl_Art"><img src="https://img.shields.io/badge/🤗_HuggingFace-Demo2-ffbd45.svg" alt="HuggingFace"></a>
 <a href="https://github.com/Yuanshi9815/Subjects200K"><img src="https://img.shields.io/badge/GitHub-Dataset-blue.svg?logo=github&" alt="GitHub"></a>
 <a href="https://huggingface.co/datasets/Yuanshi/Subjects200K"><img src="https://img.shields.io/badge/🤗_HuggingFace-Dataset-ffbd45.svg" alt="HuggingFace"></a>
+<br>
+<a href="https://arxiv.org/abs/2411.15098"><img src="https://img.shields.io/badge/ariXv-OminiControl-A42C25.svg" alt="arXiv"></a>
+<a href="https://arxiv.org/abs/2503.08280"><img src="https://img.shields.io/badge/ariXv-OminiControl2-A42C25.svg" alt="arXiv"></a>
 
 > **OminiControl: Minimal and Universal Control for Diffusion Transformer**
 > <br>
@@ -21,6 +24,19 @@
 > <br>
 > [xML Lab](https://sites.google.com/view/xml-nus), National University of Singapore
 > <br>
+
+> **OminiControl2: Efficient Conditioning for Diffusion Transformers**
+> <br>
+> Zhenxiong Tan, 
+> Qiaochu Xue, 
+> [Xingyi Yang](https://adamdad.github.io/), 
+> [Songhua Liu](http://121.37.94.87/), 
+> and 
+> [Xinchao Wang](https://sites.google.com/site/sitexinchaowang/)
+> <br>
+> [xML Lab](https://sites.google.com/view/xml-nus), National University of Singapore
+> <br>
+
 
 
 ## Features
@@ -50,11 +66,6 @@ pip install -r requirements.txt
 2. In-painting: `examples/inpainting.ipynb`
 3. Canny edge to image, depth to image, colorization, deblurring: `examples/spatial.ipynb`
 
-### Gradio app
-To run the Gradio app for subject-driven generation:
-```bash
-python -m src.gradio.gradio_app
-```
 
 ### Guidelines for subject-driven generation
 1. Input images are automatically center-cropped and resized to 512x512 resolution.
@@ -148,7 +159,7 @@ python -m src.gradio.gradio_app
 ## Limitations
 1. The model's subject-driven generation primarily works with objects rather than human subjects due to the absence of human data in training.
 2. The subject-driven generation model may not work well with `FLUX.1-dev`.
-3. The released model currently only supports the resolution of 512x512.
+3. The released model only supports the resolution of 512x512.
 
 ## Training
 Training instructions can be found in this [folder](./train).
@@ -156,15 +167,23 @@ Training instructions can be found in this [folder](./train).
 
 ## To-do
 - [x] Release the training code.
-- [ ] Release the model for higher resolution (1024x1024).
+- [x] Release the model for higher resolution (1024x1024).
 
 ## Citation
 ```
 @article{tan2024ominicontrol,
-  title={Ominicontrol: Minimal and universal control for diffusion transformer},
+  title={OminiControl: Minimal and Universal Control for Diffusion Transformer},
   author={Tan, Zhenxiong and Liu, Songhua and Yang, Xingyi and Xue, Qiaochu and Wang, Xinchao},
   journal={arXiv preprint arXiv:2411.15098},
-  volume={3},
   year={2024}
+}
+```
+
+```
+@article{tan2025ominicontrol2,
+  title={OminiControl2: Efficient Conditioning for Diffusion Transformers},
+  author={Tan, Zhenxiong and Xue, Qiaochu and Yang, Xingyi and Liu, Songhua and Wang, Xinchao},
+  journal={arXiv preprint arXiv:2503.08280},
+  year={2025}
 }
 ```
