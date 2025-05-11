@@ -57,7 +57,7 @@ bash train/script/train_spatial.sh
 ```
 **3. Multi-condition training**
 ```bash
-bash train/script/train_multicondition.sh
+bash train/script/train_multi_condition.sh
 ```
 **4. Feature reuse** ([OminiControl2](https://arxiv.org/abs/2503.08280))
 ```bash
@@ -166,9 +166,9 @@ Details effects of the LoRA modules can be found in the [OminiControl paper](htt
 
 ## Advanced Training
 ### Multi-condition
-The naive multi-condition demo is implemented in `train_multicondition.py`. You can run it by:
+The naive multi-condition demo is implemented in `train_multi_condition.py`. You can run it by:
 ```bash
-bash train/script/train_multicondition.sh
+bash train/script/train_multi_condition.sh
 ```
 
 ### Towards Efficient Generation (OminiControl2)
