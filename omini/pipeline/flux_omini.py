@@ -258,7 +258,7 @@ def attn_forward(
 
     for i, hidden_state in enumerate(hidden_states):
         h = attn_outputs[i + h2_n]
-        if hasattr(attn, "to_out"):
+        if getattr(attn, "to_out"):
             with specify_lora((attn.to_out[0],), adapters[i + h2_n]):
                 h = attn.to_out[0](h)
         h_out.append(h)
@@ -619,7 +619,7 @@ def generate(
                 guidance = torch.tensor([guidance_scale], device=device)
                 guidance = guidance.expand(latents.shape[0])
             else:
-                guidance = None
+                guidance, c_guidances = None, [None for _ in c_guidances]
 
             if kv_cache:
                 mode = "write" if i == 0 else "read"
