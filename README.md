@@ -177,9 +177,7 @@ Training instructions can be found in this [folder](./train).
   journal={arXiv preprint arXiv:2411.15098},
   year={2024}
 }
-```
 
-```
 @article{tan2025ominicontrol2,
   title={OminiControl2: Efficient Conditioning for Diffusion Transformers},
   author={Tan, Zhenxiong and Xue, Qiaochu and Yang, Xingyi and Liu, Songhua and Wang, Xinchao},
