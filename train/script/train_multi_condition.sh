@@ -2,7 +2,7 @@
 # export CUDA_VISIBLE_DEVICES=0,1
 
 # *[Specify the config file path]
-export OMINI_CONFIG=./train/config/subject.yaml
+export OMINI_CONFIG=./train/config/multi_condition.yaml
 
 # *[Specify the WANDB API key]
 # export WANDB_API_KEY='YOUR_WANDB_API_KEY'
@@ -10,4 +10,4 @@ export OMINI_CONFIG=./train/config/subject.yaml
 echo $OMINI_CONFIG
 export TOKENIZERS_PARALLELISM=true
 
-accelerate launch --main_process_port 41353 -m omini.train_flux.train_subject
+accelerate launch --main_process_port 41353 -m omini.train_flux.train_multi_condition

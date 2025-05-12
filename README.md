@@ -4,11 +4,14 @@
 <img src='./assets/demo/demo_this_is_omini_control.jpg' width='100%' />
 <br>
 
-<a href="https://arxiv.org/abs/2411.15098"><img src="https://img.shields.io/badge/ariXv-2411.15098-A42C25.svg" alt="arXiv"></a>
 <a href="https://huggingface.co/Yuanshi/OminiControl"><img src="https://img.shields.io/badge/🤗_HuggingFace-Model-ffbd45.svg" alt="HuggingFace"></a>
-<a href="https://huggingface.co/spaces/Yuanshi/OminiControl"><img src="https://img.shields.io/badge/🤗_HuggingFace-Space-ffbd45.svg" alt="HuggingFace"></a>
+<a href="https://huggingface.co/spaces/Yuanshi/OminiControl"><img src="https://img.shields.io/badge/🤗_HuggingFace-Demo-ffbd45.svg" alt="HuggingFace"></a>
+<a href="https://huggingface.co/spaces/Yuanshi/OminiControl_Art"><img src="https://img.shields.io/badge/🤗_HuggingFace-Demo2-ffbd45.svg" alt="HuggingFace"></a>
 <a href="https://github.com/Yuanshi9815/Subjects200K"><img src="https://img.shields.io/badge/GitHub-Dataset-blue.svg?logo=github&" alt="GitHub"></a>
 <a href="https://huggingface.co/datasets/Yuanshi/Subjects200K"><img src="https://img.shields.io/badge/🤗_HuggingFace-Dataset-ffbd45.svg" alt="HuggingFace"></a>
+<br>
+<a href="https://arxiv.org/abs/2411.15098"><img src="https://img.shields.io/badge/ariXv-OminiControl-A42C25.svg" alt="arXiv"></a>
+<a href="https://arxiv.org/abs/2503.08280"><img src="https://img.shields.io/badge/ariXv-OminiControl2-A42C25.svg" alt="arXiv"></a>
 
 > **OminiControl: Minimal and Universal Control for Diffusion Transformer**
 > <br>
@@ -22,6 +25,19 @@
 > [xML Lab](https://sites.google.com/view/xml-nus), National University of Singapore
 > <br>
 
+> **OminiControl2: Efficient Conditioning for Diffusion Transformers**
+> <br>
+> Zhenxiong Tan, 
+> Qiaochu Xue, 
+> [Xingyi Yang](https://adamdad.github.io/), 
+> [Songhua Liu](http://121.37.94.87/), 
+> and 
+> [Xinchao Wang](https://sites.google.com/site/sitexinchaowang/)
+> <br>
+> [xML Lab](https://sites.google.com/view/xml-nus), National University of Singapore
+> <br>
+
+
 
 ## Features
 
@@ -32,13 +48,15 @@ OminiControl is a minimal yet powerful universal control framework for Diffusion
 * **Minimal Design 🚀**: Injects control signals while preserving original model structure. Only introduces 0.1% additional parameters to the base model.
 
 ## News
+- **2025-05-12**: ⭐️ The code of [OminiControl2](https://arxiv.org/abs/2503.08280) is released. It introduces a new efficient conditioning method for diffusion transformers. (Check out the training code [here](./train)).
+- **2025-04-09**: ⭐️ [OminiControl Art](https://huggingface.co/spaces/Yuanshi/OminiControl_Art) is released. It can stylize any image with a artistic style.
 - **2024-12-26**: ⭐️ Training code are released. Now you can create your own OminiControl model by customizing any control tasks (3D, multi-view, pose-guided, try-on, etc.) with the FLUX model. Check the [training folder](./train) for more details.
 
 ## Quick Start
 ### Setup (Optional)
 1. **Environment setup**
 ```bash
-conda create -n omini python=3.10
+conda create -n omini python=3.12
 conda activate omini
 ```
 2. **Requirements installation**
@@ -50,11 +68,6 @@ pip install -r requirements.txt
 2. In-painting: `examples/inpainting.ipynb`
 3. Canny edge to image, depth to image, colorization, deblurring: `examples/spatial.ipynb`
 
-### Gradio app
-To run the Gradio app for subject-driven generation:
-```bash
-python -m src.gradio.gradio_app
-```
 
 ### Guidelines for subject-driven generation
 1. Input images are automatically center-cropped and resized to 512x512 resolution.
@@ -128,18 +141,17 @@ python -m src.gradio.gradio_app
 ## Models
 
 **Subject-driven control:**
-| Model                                                                                            | Base model     | Description                                                                                              | Resolution   |
-| ------------------------------------------------------------------------------------------------ | -------------- | -------------------------------------------------------------------------------------------------------- | ------------ |
-| [`experimental`](https://huggingface.co/Yuanshi/OminiControl/tree/main/experimental) / `subject` | FLUX.1-schnell | The model used in the paper.                                                                             | (512, 512)   |
-| [`omini`](https://huggingface.co/Yuanshi/OminiControl/tree/main/omini) / `subject_512`           | FLUX.1-schnell | The model has been fine-tuned on a larger dataset.                                                       | (512, 512)   |
-| [`omini`](https://huggingface.co/Yuanshi/OminiControl/tree/main/omini) / `subject_1024`          | FLUX.1-schnell | The model has been fine-tuned on a larger dataset and accommodates higher resolution.   (To be released) | (1024, 1024) |
-| [`oye-cartoon`](https://huggingface.co/saquiboye/oye-cartoon)          | FLUX.1-dev | The model has been fine-tuned on [oye-cartoon](https://huggingface.co/datasets/saquiboye/oye-cartoon) dataset by [@saquib764](https://github.com/Saquib764) | (512, 512) |
+| Model                                                                                            | Base model     | Description                                                                                                                                                 | Resolution   |
+| ------------------------------------------------------------------------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| [`experimental`](https://huggingface.co/Yuanshi/OminiControl/tree/main/experimental) / `subject` | FLUX.1-schnell | The model used in the paper.                                                                                                                                | (512, 512)   |
+| [`omini`](https://huggingface.co/Yuanshi/OminiControl/tree/main/omini) / `subject_512`           | FLUX.1-schnell | The model has been fine-tuned on a larger dataset.                                                                                                          | (512, 512)   |
+| [`omini`](https://huggingface.co/Yuanshi/OminiControl/tree/main/omini) / `subject_1024`          | FLUX.1-schnell | The model has been fine-tuned on a larger dataset and accommodates higher resolution.                                                                       | (1024, 1024) |
+| [`oye-cartoon`](https://huggingface.co/saquiboye/oye-cartoon)                                    | FLUX.1-dev     | The model has been fine-tuned on [oye-cartoon](https://huggingface.co/datasets/saquiboye/oye-cartoon) dataset by [@saquib764](https://github.com/Saquib764) | (512, 512)   |
 
 **Spatial aligned control:**
 | Model                                                                                                     | Base model | Description                                                                | Resolution   |
 | --------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------- | ------------ |
-| [`experimental`](https://huggingface.co/Yuanshi/OminiControl/tree/main/experimental) / `<task_name>`      | FLUX.1     | Canny edge to image, depth to image, colorization, deblurring, in-painting | (512, 512)   |
-| [`experimental`](https://huggingface.co/Yuanshi/OminiControl/tree/main/experimental) / `<task_name>_1024` | FLUX.1     | Supports higher resolution.(To be released)                                | (1024, 1024) |
+| [`experimental`](https://huggingface.co/Yuanshi/OminiControl/tree/main/experimental) / `<task_name>`      | FLUX.1     | Canny edge to image, depth to image, colorization, deblurring, in-painting | (512, 512)   |=
 
 ## Community Extensions
 - [ComfyUI-Diffusers-OminiControl](https://github.com/Macoron/ComfyUI-Diffusers-OminiControl) - ComfyUI integration by [@Macoron](https://github.com/Macoron)
@@ -148,7 +160,7 @@ python -m src.gradio.gradio_app
 ## Limitations
 1. The model's subject-driven generation primarily works with objects rather than human subjects due to the absence of human data in training.
 2. The subject-driven generation model may not work well with `FLUX.1-dev`.
-3. The released model currently only supports the resolution of 512x512.
+3. The released model only supports the resolution of 512x512.
 
 ## Training
 Training instructions can be found in this [folder](./train).
@@ -156,15 +168,21 @@ Training instructions can be found in this [folder](./train).
 
 ## To-do
 - [x] Release the training code.
-- [ ] Release the model for higher resolution (1024x1024).
+- [x] Release the model for higher resolution (1024x1024).
 
 ## Citation
 ```
 @article{tan2024ominicontrol,
-  title={Ominicontrol: Minimal and universal control for diffusion transformer},
+  title={OminiControl: Minimal and Universal Control for Diffusion Transformer},
   author={Tan, Zhenxiong and Liu, Songhua and Yang, Xingyi and Xue, Qiaochu and Wang, Xinchao},
   journal={arXiv preprint arXiv:2411.15098},
-  volume={3},
   year={2024}
+}
+
+@article{tan2025ominicontrol2,
+  title={OminiControl2: Efficient Conditioning for Diffusion Transformers},
+  author={Tan, Zhenxiong and Xue, Qiaochu and Yang, Xingyi and Liu, Songhua and Wang, Xinchao},
+  journal={arXiv preprint arXiv:2503.08280},
+  year={2025}
 }
 ```

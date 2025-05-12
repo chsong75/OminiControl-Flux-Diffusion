@@ -1,138 +1,249 @@
-# OminiControl Training 🛠️
+# Training for FLUX
 
-## Preparation
+## Table of Contents
+- [Training for FLUX](#training-for-flux)
+  - [Table of Contents](#table-of-contents)
+  - [Environment Setup](#environment-setup)
+  - [Dataset Preparation](#dataset-preparation)
+  - [Quick Start](#quick-start)
+  - [Basic Training](#basic-training)
+    - [Tasks from OminiControl](#tasks-from-ominicontrol)
+    - [Creating Your Own Task](#creating-your-own-task)
+    - [Training Configuration](#training-configuration)
+      - [Optimizer](#optimizer)
+      - [LoRA Configuration](#lora-configuration)
+      - [Trainable Modules](#trainable-modules)
+  - [Advanced Training](#advanced-training)
+    - [Multi-condition](#multi-condition)
+    - [Efficient Generation (OminiControl2)](#efficient-generation-ominicontrol2)
+      - [Feature Reuse (KV-Cache)](#feature-reuse-kv-cache)
+      - [Compact Encoding Representation](#compact-encoding-representation)
+      - [Token Integration (for Fill task)](#token-integration-for-fill-task)
+  - [Citation](#citation)
 
-### Setup
-1. **Environment**
-    ```bash
-    conda create -n omini python=3.10
-    conda activate omini
-    ```
-2. **Requirements**
-    ```bash
-    pip install -r train/requirements.txt
-    ```
+## Environment Setup
 
-### Dataset
-1. Download dataset [Subject200K](https://huggingface.co/datasets/Yuanshi/Subjects200K). (**subject-driven generation**)
-    ```
-    bash train/script/data_download/data_download1.sh
-    ```
-2. Download dataset [text-to-image-2M](https://huggingface.co/datasets/jackyhate/text-to-image-2M). (**spatial control task**)
-    ```
-    bash train/script/data_download/data_download2.sh
-    ```
-    **Note:** By default, only a few files are downloaded. You can modify `data_download2.sh` to download additional datasets. Remember to update the config file to specify the training data accordingly.
+1. Create and activate a new conda environment:
+   ```bash
+   conda create -n omini python=3.10
+   conda activate omini
+   ```
 
-## Training
+2. Install required packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### Start training training
-**Config file path**: `./train/config`
+## Dataset Preparation
 
-**Scripts path**: `./train/script`
+1. Download [Subject200K](https://huggingface.co/datasets/Yuanshi/Subjects200K) dataset for subject-driven generation:
+   ```bash
+   bash train/script/data_download/data_download1.sh
+   ```
 
-1. Subject-driven generation
-    ```bash
-    bash train/script/train_subject.sh
-    ```
-2. Spatial control task
-    ```bash
-    bash train/script/train_canny.sh
-    ```
-
-**Note**: Detailed WanDB settings and GPU settings can be found in the script files and the config files.
-
-### Other spatial control tasks
-This repository supports 5 spatial control tasks: 
-1. Canny edge to image (`canny`)
-2. Image colorization (`coloring`)
-3. Image deblurring (`deblurring`)
-4. Depth map to image (`depth`)
-5. Image to depth map  (`depth_pred`)
-6. Image inpainting (`fill`)
-7. Super resolution (`sr`)
-
-You can modify the `condition_type` parameter in config file `config/canny_512.yaml` to switch between different tasks.
-
-### Customize your own task
-You can customize your own task by constructing a new dataset and modifying the training code.
-
-<details>
-<summary>Instructions</summary>
-
-1. **Dataset** : 
-   
-   Construct a new dataset with the following format: (`src/train/data.py`)
-    ```python
-    class MyDataset(Dataset):
-        def __init__(self, ...):
-            ...
-        def __len__(self):
-            ...
-        def __getitem__(self, idx):
-            ...
-            return {
-                "image": image,
-                "condition": condition_img,
-                "condition_type": "your_condition_type",
-                "description": description,
-                "position_delta": position_delta
-            }
-    ```
-    **Note:** For spatial control tasks, set the `position_delta` to be `[0, 0]`. For non-spatial control tasks, set `position_delta` to be `[0, -condition_width // 16]`.
-2. **Condition**:
-   
-   Add a new condition type in the `Condition` class. (`src/flux/condition.py`)
-    ```python
-    condition_dict = {
-        ...
-        "your_condition_type": your_condition_id_number, # Add your condition type here
-    }
-    ...
-    if condition_type in [
-        ...
-        "your_condition_type", # Add your condition type here
-    ]:
-        ...
-    ```
-3. **Test**: 
-   
-   Add a new test function for your task. (`src/train/callbacks.py`)
-    ```python
-    if self.condition_type == "your_condition_type":
-        condition_img = (
-            Image.open("images/vase.jpg")
-            .resize((condition_size, condition_size))
-            .convert("RGB")
-        )
-        ...
-        test_list.append((condition_img, [0, 0], "A beautiful vase on a table."))
-    ```
-
-4. **Import relevant dataset in the training script**
-   Update the file in the following section. (`src/train/train.py`)
-   ```python
-    from .data import (
-        ImageConditionDataset,
-        Subject200KDateset,
-        MyDataset
-    )
-    ...
-   
-    # Initialize dataset and dataloader
-    if training_config["dataset"]["type"] == "your_condition_type":
-       ...
+2. Download [text-to-image-2M](https://huggingface.co/datasets/jackyhate/text-to-image-2M) dataset for spatial alignment control tasks:
+   ```bash
+   bash train/script/data_download/data_download2.sh
    ```
    
-</details>
+   **Note:** By default, only a few files will be downloaded. You can edit `data_download2.sh` to download more data, and update the config file accordingly.
 
-## Hardware requirement
-**Note**: Memory optimization (like dynamic T5 model loading) is pending implementation.
+## Quick Start
 
-**Recommanded**
-- Hardware: 2x NVIDIA H100 GPUs
-- Memory: ~80GB GPU memory
+Use these scripts to start training immediately:
 
-**Minimal**
-- Hardware: 1x NVIDIA L20 GPU
-- Memory: ~48GB GPU memory
+1. **Subject-driven generation**:
+   ```bash
+   bash train/script/train_subject.sh
+   ```
+
+2. **Spatial control tasks** (Canny-to-image, colorization, depth map, etc.):
+   ```bash
+   bash train/script/train_spatial_alignment.sh
+   ```
+
+3. **Multi-condition training**:
+   ```bash
+   bash train/script/train_multi_condition.sh
+   ```
+
+4. **Feature reuse** (OminiControl2):
+   ```bash
+   bash train/script/train_feature_reuse.sh
+   ```
+
+5. **Compact token representation** (OminiControl2):
+   ```bash
+   bash train/script/train_compact_token_representation.sh
+   ```
+
+6. **Token integration** (OminiControl2):
+   ```bash
+   bash train/script/train_token_intergration.sh
+   ```
+
+## Basic Training
+
+### Tasks from OminiControl
+<a href="https://arxiv.org/abs/2411.15098"><img src="https://img.shields.io/badge/ariXv-2411.15098-A42C25.svg" alt="arXiv"></a>
+
+1. Subject-driven generation:
+   ```bash
+   bash train/script/train_subject.sh
+   ```
+
+2. Spatial control tasks (using canny-to-image as example):
+   ```bash
+   bash train/script/train_spatial_alignment.sh
+   ```
+
+   <details>
+   <summary>Supported tasks</summary>
+
+   * Canny edge to image (`canny`)
+   * Image colorization (`coloring`)
+   * Image deblurring (`deblurring`)
+   * Depth map to image (`depth`)
+   * Image to depth map (`depth_pred`)
+   * Image inpainting (`fill`)
+   * Super resolution (`sr`)
+   
+   🌟 Change the `condition_type` parameter in the config file to switch between tasks.
+   </details>
+
+**Note**: Check the **script files** (`train/script/`) and **config files** (`train/configs/`) for WanDB and GPU settings.
+
+### Creating Your Own Task
+
+You can create a custom task by building a new dataset and modifying the test code:
+
+1. **Create a custom dataset:**
+   Your custom dataset should follow the format of `Subject200KDataset` in `omini/train_flux/train_subject.py`. Each sample should contain:
+
+   - Image: the target image (`image`)
+   - Text: description of the image (`description`)
+   - Conditions: image conditions for generation
+   - Position delta:
+     - Use `position_delta = (0, 0)` to align the condition with the generated image
+     - Use `position_delta = (0, -a)` to separate them (a = condition width / 16)
+
+   > **Explanation:**  
+   > The model places both the condition and generated image in a shared coordinate system. `position_delta` shifts the condition image in this space.
+   > 
+   > Each unit equals one patch (16 pixels). For a 512px-wide condition image (32 patches), `position_delta = (0, -32)` moves it fully to the left.
+   > 
+   > This controls whether conditions and generated images share space or appear side-by-side.
+
+2. **Modify the test code:**
+   Define `test_function()` in `train_custom.py`. Refer to the function in `train_subject.py` for examples. Make sure to keep the `position_delta` parameter consistent with your dataset.
+
+### Training Configuration
+
+#### Optimizer
+The default optimizer is `Prodigy`. To use `AdamW` instead, modify the config file:
+```yaml
+optimizer:
+  type: AdamW
+  lr: 1e-4
+  weight_decay: 0.001
+```
+
+#### LoRA Configuration
+Default LoRA rank is 4. Increase it for complex tasks (keep `r` and `lora_alpha` parameters the same):
+```yaml
+lora_config:
+  r: 128
+  lora_alpha: 128
+```
+
+#### Trainable Modules
+The `target_modules` parameter uses regex patterns to specify which modules to train. See [PEFT Documentation](https://huggingface.co/docs/peft/package_reference/lora) for details.
+
+Default configuration trains all modules affecting image tokens:
+```yaml
+target_modules: "(.*x_embedder|.*(?<!single_)transformer_blocks\\.[0-9]+\\.norm1\\.linear|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_k|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_q|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_v|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_out\\.0|.*(?<!single_)transformer_blocks\\.[0-9]+\\.ff\\.net\\.2|.*single_transformer_blocks\\.[0-9]+\\.norm\\.linear|.*single_transformer_blocks\\.[0-9]+\\.proj_mlp|.*single_transformer_blocks\\.[0-9]+\\.proj_out|.*single_transformer_blocks\\.[0-9]+\\.attn.to_k|.*single_transformer_blocks\\.[0-9]+\\.attn.to_q|.*single_transformer_blocks\\.[0-9]+\\.attn.to_v|.*single_transformer_blocks\\.[0-9]+\\.attn.to_out)"
+```
+
+To train only attention components (`to_q`, `to_k`, `to_v`), use:
+```yaml
+target_modules: "(.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_k|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_q|.*(?<!single_)transformer_blocks\\.[0-9]+\\.attn\\.to_v|.*single_transformer_blocks\\.[0-9]+\\.attn.to_k|.*single_transformer_blocks\\.[0-9]+\\.attn.to_q|.*single_transformer_blocks\\.[0-9]+\\.attn.to_v)"
+```
+
+## Advanced Training
+
+### Multi-condition
+A basic multi-condition implementation is available in `train_multi_condition.py`:
+```bash
+bash train/script/train_multi_condition.sh
+```
+
+### Efficient Generation (OminiControl2)
+<a href="https://arxiv.org/abs/2503.08280"><img src="https://img.shields.io/badge/ariXv-2503.08280-A42C25.svg" alt="arXiv"></a>
+
+[OminiControl2](https://arxiv.org/abs/2503.08280) introduces techniques to improve generation efficiency:
+
+#### Feature Reuse (KV-Cache)
+1. Enable `independent_condition` in the config file during training:
+   ```yaml
+   model:
+     independent_condition: true
+   ```
+
+2. During inference, set `kv_cache = True` in the `generate` function to speed up generation.
+
+*Example:*
+```bash
+bash train/script/train_feature_reuse.sh
+```
+
+**Note:** Feature reuse speeds up generation but may slightly reduce performance and increase training time.
+
+#### Compact Encoding Representation
+Reduce the condition image resolution and use `position_scale` to align it with the output image:
+
+```diff
+train:
+  dataset:
+    condition_size: 
+-     - 512
+-     - 512
++     - 256
++     - 256
++   position_scale: 2
+    target_size: 
+      - 512
+      - 512
+```
+
+*Example:*
+```bash
+bash train/script/train_compact_token_representation.sh
+```
+
+#### Token Integration (for Fill task)
+Further reduce tokens by merging condition and generation tokens into a unified sequence. (Refer to [the paper](https://arxiv.org/abs/2503.08280) for details.)
+
+*Example:*
+```bash
+bash train/script/train_token_intergration.sh
+```
+
+## Citation
+
+If you find this code useful, please cite our papers:
+
+```
+@article{tan2024ominicontrol,
+  title={OminiControl: Minimal and Universal Control for Diffusion Transformer},
+  author={Tan, Zhenxiong and Liu, Songhua and Yang, Xingyi and Xue, Qiaochu and Wang, Xinchao},
+  journal={arXiv preprint arXiv:2411.15098},
+  year={2024}
+}
+
+@article{tan2025ominicontrol2,
+  title={OminiControl2: Efficient Conditioning for Diffusion Transformers},
+  author={Tan, Zhenxiong and Xue, Qiaochu and Yang, Xingyi and Liu, Songhua and Wang, Xinchao},
+  journal={arXiv preprint arXiv:2503.08280},
+  year={2025}
+}
+```
