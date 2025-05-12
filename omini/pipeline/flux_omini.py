@@ -258,7 +258,7 @@ def attn_forward(
 
     for i, hidden_state in enumerate(hidden_states):
         h = attn_outputs[i + h2_n]
-        if getattr(attn, "to_out"):
+        if getattr(attn, "to_out", None) is not None:
             with specify_lora((attn.to_out[0],), adapters[i + h2_n]):
                 h = attn.to_out[0](h)
         h_out.append(h)

@@ -349,7 +349,7 @@ def train(dataset, trainable_model, config, test_function):
     print("Dataset length:", len(dataset))
     train_loader = DataLoader(
         dataset,
-        batch_size=training_config["batch_size"],
+        batch_size=training_config.get("batch_size", 1),
         shuffle=True,
         num_workers=training_config["dataloader_workers"],
     )
