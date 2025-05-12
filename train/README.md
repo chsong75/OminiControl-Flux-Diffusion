@@ -1,17 +1,25 @@
 # Training for FLUX
 
 ## Table of Contents
-- [Environment Setup](#environment-setup)
-- [Dataset Preparation](#dataset-preparation)
-- [Quick Start](#quick-start)
-- [Basic Training](#basic-training)
-  - [Tasks from OminiControl](#tasks-from-ominicontrol)
-  - [Creating Your Own Task](#creating-your-own-task)
-  - [Training Configuration](#training-configuration)
-- [Advanced Training](#advanced-training)
-  - [Multi-condition](#multi-condition)
-  - [Efficient Generation (OminiControl2)](#efficient-generation-ominicontrol2)
-- [Citation](#citation)
+- [Training for FLUX](#training-for-flux)
+  - [Table of Contents](#table-of-contents)
+  - [Environment Setup](#environment-setup)
+  - [Dataset Preparation](#dataset-preparation)
+  - [Quick Start](#quick-start)
+  - [Basic Training](#basic-training)
+    - [Tasks from OminiControl](#tasks-from-ominicontrol)
+    - [Creating Your Own Task](#creating-your-own-task)
+    - [Training Configuration](#training-configuration)
+      - [Optimizer](#optimizer)
+      - [LoRA Configuration](#lora-configuration)
+      - [Trainable Modules](#trainable-modules)
+  - [Advanced Training](#advanced-training)
+    - [Multi-condition](#multi-condition)
+    - [Efficient Generation (OminiControl2)](#efficient-generation-ominicontrol2)
+      - [Feature Reuse (KV-Cache)](#feature-reuse-kv-cache)
+      - [Compact Encoding Representation](#compact-encoding-representation)
+      - [Token Integration (for Fill task)](#token-integration-for-fill-task)
+  - [Citation](#citation)
 
 ## Environment Setup
 
@@ -33,7 +41,7 @@
    bash train/script/data_download/data_download1.sh
    ```
 
-2. Download [text-to-image-2M](https://huggingface.co/datasets/jackyhate/text-to-image-2M) dataset for spatial control tasks:
+2. Download [text-to-image-2M](https://huggingface.co/datasets/jackyhate/text-to-image-2M) dataset for spatial alignment control tasks:
    ```bash
    bash train/script/data_download/data_download2.sh
    ```
@@ -51,7 +59,7 @@ Use these scripts to start training immediately:
 
 2. **Spatial control tasks** (Canny-to-image, colorization, depth map, etc.):
    ```bash
-   bash train/script/train_spatial.sh
+   bash train/script/train_spatial_alignment.sh
    ```
 
 3. **Multi-condition training**:
@@ -86,7 +94,7 @@ Use these scripts to start training immediately:
 
 2. Spatial control tasks (using canny-to-image as example):
    ```bash
-   bash train/script/train_spatial.sh
+   bash train/script/train_spatial_alignment.sh
    ```
 
    <details>
