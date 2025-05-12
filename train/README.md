@@ -118,7 +118,7 @@ Use these scripts to start training immediately:
 You can create a custom task by building a new dataset and modifying the test code:
 
 1. **Create a custom dataset:**
-   Your custom dataset should follow the format of `ImageConditionDataset` in `omini/train_flux/train_single.py`. Each sample should contain:
+   Your custom dataset should follow the format of `Subject200KDataset` in `omini/train_flux/train_subject.py`. Each sample should contain:
 
    - Image: the target image (`image`)
    - Text: description of the image (`description`)
@@ -135,7 +135,7 @@ You can create a custom task by building a new dataset and modifying the test co
    > This controls whether conditions and generated images share space or appear side-by-side.
 
 2. **Modify the test code:**
-   Define `test_function()` in `base_model.py`. Refer to the function in `train_single.py` for examples. Make sure to keep the `position_delta` parameter consistent with your dataset.
+   Define `test_function()` in `train_custom.py`. Refer to the function in `train_subject.py` for examples. Make sure to keep the `position_delta` parameter consistent with your dataset.
 
 ### Training Configuration
 
