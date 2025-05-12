@@ -1,18 +1,14 @@
 import torch
-from torch.utils.data import DataLoader
-import lightning as L
 import os
-import time
 import random
-import yaml
 
 from PIL import Image, ImageDraw
 
 from datasets import load_dataset
 
-from .trainer import BaseModel, get_config, train
+from .trainer import OminiModel, get_config, train
 from ..pipeline.flux_omini import Condition, generate
-from .train_single import ImageConditionDataset
+from .train_spatial_alignment import ImageConditionDataset
 
 
 class TokenIntergrationDataset(ImageConditionDataset):
@@ -55,47 +51,46 @@ class TokenIntergrationDataset(ImageConditionDataset):
         }
 
 
-class OminiModel(BaseModel):
-    @torch.no_grad()
-    def generate_a_sample(self, save_path, file_name):
-        target_size = self.training_config["dataset"]["target_size"]
+@torch.no_grad()
+def test_function(model, save_path, file_name):
+    target_size = model.training_config["dataset"]["target_size"]
 
-        generator = torch.Generator(device=self.device)
+    condition_type = model.training_config["condition_type"]
+    test_list = []
+
+    # Generate two masks to test inpainting and outpainting.
+    mask1 = torch.ones((32, 32), dtype=bool)
+    mask1[8:24, 8:24] = False
+    mask2 = torch.logical_not(mask1)
+
+    image = Image.open("assets/vase_hq.jpg").resize(target_size)
+    condition1 = Condition(
+        image, model.adapter_names[2], latent_mask=mask1, is_complement=True
+    )
+    condition2 = Condition(
+        image, model.adapter_names[2], latent_mask=mask2, is_complement=True
+    )
+    test_list.append((condition1, "A beautiful vase on a table.", mask2))
+    test_list.append((condition2, "A beautiful vase on a table.", mask1))
+
+    os.makedirs(save_path, exist_ok=True)
+    for i, (condition, prompt, latent_mask) in enumerate(test_list):
+        generator = torch.Generator(device=model.device)
         generator.manual_seed(42)
 
-        condition_type = self.training_config["condition_type"]
-        test_list = []
-
-        # Generate two masks to test inpainting and outpainting.
-        mask1 = torch.ones((32, 32), dtype=bool)
-        mask1[8:24, 8:24] = False
-        mask2 = torch.logical_not(mask1)
-
-        image = Image.open("assets/vase_hq.jpg").resize(target_size)
-        condition1 = Condition(
-            image, self.adapter_names[2], latent_mask=mask1, is_complement=True
+        res = generate(
+            model.flux_pipe,
+            prompt=prompt,
+            conditions=[condition],
+            height=target_size[0],
+            width=target_size[1],
+            generator=generator,
+            model_config=model.model_config,
+            kv_cache=model.model_config.get("independent_condition", False),
+            latent_mask=latent_mask,
         )
-        condition2 = Condition(
-            image, self.adapter_names[2], latent_mask=mask2, is_complement=True
-        )
-        test_list.append((condition1, "A beautiful vase on a table.", mask2))
-        test_list.append((condition2, "A beautiful vase on a table.", mask1))
-
-        os.makedirs(save_path, exist_ok=True)
-        for i, (condition, prompt, latent_mask) in enumerate(test_list):
-            res = generate(
-                self.flux_pipe,
-                prompt=prompt,
-                conditions=[condition],
-                height=target_size[0],
-                width=target_size[1],
-                generator=generator,
-                model_config=self.model_config,
-                kv_cache=self.model_config.get("independent_condition", False),
-                latent_mask=latent_mask,
-            )
-            file_path = os.path.join(save_path, f"{file_name}_{condition_type}_{i}.jpg")
-            res.images[0].save(file_path)
+        file_path = os.path.join(save_path, f"{file_name}_{condition_type}_{i}.jpg")
+        res.images[0].save(file_path)
 
 
 def main():
@@ -133,7 +128,7 @@ def main():
         adapter_names=[None, None, "default"],
     )
 
-    train(dataset, trainable_model, config)
+    train(dataset, trainable_model, config, test_function)
 
 
 if __name__ == "__main__":
