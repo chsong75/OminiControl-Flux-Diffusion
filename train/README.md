@@ -10,6 +10,7 @@
     - [Tasks from OminiControl](#tasks-from-ominicontrol)
     - [Creating Your Own Task](#creating-your-own-task)
     - [Training Configuration](#training-configuration)
+      - [Batch Size](#batch-size)
       - [Optimizer](#optimizer)
       - [LoRA Configuration](#lora-configuration)
       - [Trainable Modules](#trainable-modules)
@@ -138,6 +139,9 @@ You can create a custom task by building a new dataset and modifying the test co
    Define `test_function()` in `train_custom.py`. Refer to the function in `train_subject.py` for examples. Make sure to keep the `position_delta` parameter consistent with your dataset.
 
 ### Training Configuration
+
+#### Batch Size
+We recommend a batch size of 1 for stable training. And you can set `accumulate_grad_batches` to n to simulate a batch size of n. 
 
 #### Optimizer
 The default optimizer is `Prodigy`. To use `AdamW` instead, modify the config file:
