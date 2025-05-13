@@ -171,6 +171,7 @@ def main():
     # Initialize
     config = get_config()
     training_config = config["train"]
+    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK")))
 
     # Load dataset text-to-image-2M
     dataset = load_dataset(

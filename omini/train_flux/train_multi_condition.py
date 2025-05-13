@@ -118,6 +118,7 @@ def main():
     # Initialize
     config = get_config()
     training_config = config["train"]
+    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK")))
 
     # Initialize dataset
     dataset = load_dataset(
