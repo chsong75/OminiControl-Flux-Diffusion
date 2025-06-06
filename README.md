@@ -177,6 +177,9 @@ Training instructions can be found in this [folder](./train).
 - [x] Release the training code.
 - [x] Release the model for higher resolution (1024x1024).
 
+## Acknowledgment
+We would like to acknowledge that the computational work involved in this research work is partially supported by NUS IT’s Research Computing group using grant numbers NUSREC-HPC-00001.
+
 ## Citation
 ```
 @article{tan2024ominicontrol,
