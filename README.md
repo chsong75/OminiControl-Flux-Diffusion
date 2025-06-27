@@ -182,11 +182,11 @@ We would like to acknowledge that the computational work involved in this resear
 
 ## Citation
 ```
-@article{tan2024ominicontrol,
+@article{tan2025ominicontrol,
   title={OminiControl: Minimal and Universal Control for Diffusion Transformer},
   author={Tan, Zhenxiong and Liu, Songhua and Yang, Xingyi and Xue, Qiaochu and Wang, Xinchao},
-  journal={arXiv preprint arXiv:2411.15098},
-  year={2024}
+  booktitle={Proceedings of the IEEE/CVF International Conference on Computer Vision},
+  year={2025}
 }
 
 @article{tan2025ominicontrol2,
