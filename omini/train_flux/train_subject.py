@@ -152,7 +152,7 @@ def main():
     # Initialize
     config = get_config()
     training_config = config["train"]
-    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK")))
+    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", 0)))
 
     # Initialize raw dataset
     raw_dataset = load_dataset("Yuanshi/Subjects200K")
