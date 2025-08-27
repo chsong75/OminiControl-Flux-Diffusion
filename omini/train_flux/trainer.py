@@ -178,7 +178,7 @@ class OminiModel(L.LightningModule):
             x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.dtype)
             if image_latent_mask is not None:
                 # x_0~ x_t에 같은 image_latent_mask[0]을 넣는것은 동일한 마스크 이미지를 집어넣은것과 같음. 
-                x_0 = x_0[:, image_latent_mask[0]]
+                x_0 = x_0[:, image_latent_mask[0]] # [B, N, D] > [B, N_keep, D] (N_keep ≤ N) , N_keep true 인 토큰수 (N_keep = image_latent_mask[0].sum())
                 x_1 = x_1[:, image_latent_mask[0]]
                 x_t = x_t[:, image_latent_mask[0]]
                 # img_ids는 각 토큰의 위치 정보 
