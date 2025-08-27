@@ -177,10 +177,18 @@ class OminiModel(L.LightningModule):
             t_ = t.unsqueeze(1).unsqueeze(1)
             x_t = ((1 - t_) * x_0 + t_ * x_1).to(self.dtype)
             if image_latent_mask is not None:
+                # x_0~ x_t에 같은 image_latent_mask[0]을 넣는것은 동일한 마스크 이미지를 집어넣은것과 같음. 
                 x_0 = x_0[:, image_latent_mask[0]]
                 x_1 = x_1[:, image_latent_mask[0]]
                 x_t = x_t[:, image_latent_mask[0]]
-                img_ids = img_ids[image_latent_mask[0]]
+                # img_ids는 각 토큰의 위치 정보 
+                #     [..., 0]: batch id
+                #     [..., 1]: row(y) 좌표
+                #     [..., 2]: col(x) 좌표
+                # image_latent_mask[0]의 란 불리언 마스크 임. 
+                # 즉, 이미지 토큰 단위 선택이 일어남 
+                # 즉, img_ids의 토큰 중에서, image_latent_mask[0]가 True인 것들만 남김
+                img_ids = img_ids[image_latent_mask[0]] 
 
             # Prepare conditions
             condition_latents, condition_ids = [], []
